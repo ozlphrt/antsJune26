@@ -108,12 +108,17 @@ export class PheromoneGrid {
             else if (fVal >= 0.05) f = 0.25; // Light/low frequency
             
             const pxIdx = i * 4;
+            const maxVal = Math.max(h, f);
             
-            // Blend home and food colors based on respective dynamic RGB sets
-            data[pxIdx]     = Math.floor(h * this.homeRGB[0] + f * this.foodRGB[0]);    // R
-            data[pxIdx + 1] = Math.floor(h * this.homeRGB[1] + f * this.foodRGB[1]);    // G
-            data[pxIdx + 2] = Math.floor(h * this.homeRGB[2] + f * this.foodRGB[2]);    // B
-            data[pxIdx + 3] = Math.floor(Math.max(h, f) * 230); // Alpha intensity
+            // Render full-brightness color to keep it visible, only modifying alpha for intensity tiers
+            const r = h > f ? this.homeRGB[0] : this.foodRGB[0];
+            const g = h > f ? this.homeRGB[1] : this.foodRGB[1];
+            const b = h > f ? this.homeRGB[2] : this.foodRGB[2];
+            
+            data[pxIdx]     = r;
+            data[pxIdx + 1] = g;
+            data[pxIdx + 2] = b;
+            data[pxIdx + 3] = Math.floor(maxVal * 255); // Alpha intensity maps to 0.25, 0.60, 1.0
         }
         
         this.ctx.putImageData(imgData, 0, 0);

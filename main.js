@@ -539,7 +539,7 @@ function rebuildSimulation() {
         const overlayMaterial = new THREE.MeshBasicMaterial({
             map: pGrid.texture,
             transparent: true,
-            opacity: 0.28,
+            opacity: 0.85, // Raised opacity to make light/mid/dark bands clearly visible
             depthWrite: false,
             blending: THREE.NormalBlending
         });
