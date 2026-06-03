@@ -133,7 +133,7 @@ export class PheromoneGrid {
         
         // Clear main canvas and draw blurred version
         this.ctx.clearRect(0, 0, res, res);
-        this.ctx.filter = 'blur(1.8px)'; // Smooths out the jagged grid edges beautifully
+        this.ctx.filter = 'blur(0.7px)'; // Mild blur: takes the jagged edge off while keeping trails sharp
         this.ctx.drawImage(this.tempCanvas, 0, 0);
         
         this.texture.needsUpdate = true;
