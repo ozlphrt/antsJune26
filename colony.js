@@ -327,10 +327,11 @@ export class ColonyManager {
         const foodCarrierGeom = new THREE.SphereGeometry(0.26, 6, 6);
         foodCarrierGeom.translate(0, 0.12, 0.82); // Positioned clearly in front of mouth/head and raised to avoid clipping
         const foodCarrierMat = new THREE.MeshStandardMaterial({
-            color: 0xff3b3b, // Vivid red apple color
-            emissive: 0xff1e1e, // High-visibility glowing crimson
-            emissiveIntensity: 2.5, // Bright emissive shine
-            roughness: 0.2,
+            color: 0xff0000, // Pure super-saturated red
+            emissive: 0xff0000, // Ultra-bright glowing red
+            emissiveIntensity: 4.5, // Boosted emissive shine for extreme saturation
+            roughness: 0.05, // Highly polished/glossy
+            metalness: 0.1,
             flatShading: true
         });
         this.foodCarriedMesh = new THREE.InstancedMesh(foodCarrierGeom, foodCarrierMat, count);
