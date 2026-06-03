@@ -162,6 +162,9 @@ let cameraPresetMode = 'default';
 let initialTotalFood = 0; // Total food spawned initially + custom food placed
 let lastCombatCentroid = new THREE.Vector3();
 let combatCooldownTimer = 0; // cinematic delay to keep camera focused on battle zone
+let isTransitioningCamera = false; // flag to enable smooth glide transition to default view
+const transitionTargetPos = new THREE.Vector3();
+const transitionTargetLook = new THREE.Vector3();
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
@@ -249,7 +252,7 @@ function generateRandomNestPositions(count) {
 }
 
 // Automatically adjusts camera position and OrbitControls to frame all nests beautifully
-function adjustCameraToFrameNests() {
+function adjustCameraToFrameNests(instant = false) {
     if (!colonies || colonies.length < 2) return;
     
     // 1. Calculate center of the nests
@@ -292,14 +295,20 @@ function adjustCameraToFrameNests() {
     const camHeight = Math.sin(angle) * distance;
     const camDepth = Math.cos(angle) * distance;
     
-    camera.position.set(center.x, center.y + camHeight, center.z + camDepth);
+    const targetPos = new THREE.Vector3(center.x, center.y + camHeight, center.z + camDepth);
+    const targetLook = center.clone();
     
-    // Update OrbitControls targets
-    controls.target.copy(center);
-    cameraLookTarget.copy(center);
-    camera.lookAt(center);
-    
-    controls.update();
+    if (instant) {
+        camera.position.copy(targetPos);
+        controls.target.copy(targetLook);
+        cameraLookTarget.copy(targetLook);
+        camera.lookAt(targetLook);
+        controls.update();
+    } else {
+        transitionTargetPos.copy(targetPos);
+        transitionTargetLook.copy(targetLook);
+        isTransitioningCamera = true;
+    }
 }
 
 /// Spawns a floating 3D health bag model (white box with a red cross) at battle coordinates
@@ -710,6 +719,11 @@ function init() {
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.45;
     
+    // Cancel camera autotransitions if user interacts manually
+    controls.addEventListener('start', () => {
+        isTransitioningCamera = false;
+    });
+    
     ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
     scene.add(ambientLight);
     
@@ -833,6 +847,9 @@ function init() {
     rebuildSimulation();
     setupUI();
     applyCameraPreset('default');
+    
+    // Ensure initial placement is instantly set without sliding
+    adjustCameraToFrameNests(true);
     
     window.addEventListener('resize', onWindowResize);
     renderer.domElement.addEventListener('pointerdown', onCanvasClick);
@@ -1091,7 +1108,15 @@ function animate(time) {
     });
     
     // 3. Camera Controls / Tracking Update
-    if (cameraPresetMode === 'ant' && colonies[0] && colonies[0].ants.length > 0) {
+    if (isTransitioningCamera) {
+        camera.position.lerp(transitionTargetPos, 0.04);
+        controls.target.lerp(transitionTargetLook, 0.04);
+        controls.update();
+        if (camera.position.distanceTo(transitionTargetPos) < 0.1 && 
+            controls.target.distanceTo(transitionTargetLook) < 0.1) {
+            isTransitioningCamera = false;
+        }
+    } else if (cameraPresetMode === 'ant' && colonies[0] && colonies[0].ants.length > 0) {
         const trackingColony = colonies[0];
         const antMatrix = new THREE.Matrix4();
         trackingColony.instancedMesh.getMatrixAt(0, antMatrix);
@@ -1459,19 +1484,23 @@ function applyCameraPreset(preset) {
         document.getElementById('btn-camera-follow').classList.remove('active');
         controls.enabled = true;
         controls.autoRotate = true;
-        adjustCameraToFrameNests();
+        adjustCameraToFrameNests(false); // Glide smoothly to frame nests
     } else if (preset === 'battle') {
         followAntMode = false;
+        isTransitioningCamera = false;
         document.getElementById('btn-camera-orbit').classList.add('active');
         document.getElementById('btn-camera-follow').classList.remove('active');
         controls.enabled = true;
         controls.autoRotate = true;
     } else if (preset === 'ant') {
         followAntMode = true;
+        isTransitioningCamera = false;
         document.getElementById('btn-camera-follow').classList.add('active');
         document.getElementById('btn-camera-orbit').classList.remove('active');
         controls.enabled = false;
         controls.autoRotate = false;
+        // Seed starting look target to match current controls to prevent coordinate snap jumps
+        cameraLookTarget.copy(controls.target);
     }
 }
 
