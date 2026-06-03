@@ -95,8 +95,8 @@ export class PheromoneGrid {
         const data = imgData.data;
         
         for (let i = 0; i < res * res; i++) {
-            const h = Math.min(1.0, this.homeGrid[i] * 3.0);
-            const f = Math.min(1.0, this.foodGrid[i] * 3.0);
+            const h = Math.min(1.0, this.homeGrid[i] / 4.0);
+            const f = Math.min(1.0, this.foodGrid[i] / 4.0);
             
             const pxIdx = i * 4;
             
