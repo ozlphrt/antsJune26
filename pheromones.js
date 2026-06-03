@@ -97,15 +97,17 @@ export class PheromoneGrid {
         for (let i = 0; i < res * res; i++) {
             let h = 0;
             const hVal = this.homeGrid[i];
-            if (hVal >= 3.0) h = 1.0;      // Dark/high frequency
-            else if (hVal >= 1.0) h = 0.60; // Mid frequency
-            else if (hVal >= 0.05) h = 0.25; // Light/low frequency
+            if (hVal >= 0.05) {
+                const level = Math.min(16, Math.ceil(hVal * 4.0)); // Map 0.05..4.0+ to 1..16 steps
+                h = level / 16.0; // 16 discrete tones (1/16 to 16/16)
+            }
 
             let f = 0;
             const fVal = this.foodGrid[i];
-            if (fVal >= 3.0) f = 1.0;      // Dark/high frequency
-            else if (fVal >= 1.0) f = 0.60; // Mid frequency
-            else if (fVal >= 0.05) f = 0.25; // Light/low frequency
+            if (fVal >= 0.05) {
+                const level = Math.min(16, Math.ceil(fVal * 4.0)); // Map 0.05..4.0+ to 1..16 steps
+                f = level / 16.0; // 16 discrete tones (1/16 to 16/16)
+            }
             
             const pxIdx = i * 4;
             const maxVal = Math.max(h, f);
