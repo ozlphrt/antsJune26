@@ -646,7 +646,9 @@ function createNest(x, z, coreColor) {
     
     const coreGeom = new THREE.SphereGeometry(1.8, 16, 16);
     const coreMat = new THREE.MeshStandardMaterial({
-        color: coreColor,
+        color: 0x000000, // Black diffuse to ignore scene lighting
+        emissive: coreColor, // Self-illuminated emissive color matching the colony color
+        emissiveIntensity: 2.5, // Bright glowing intensity
         roughness: 0.15,
         metalness: 0.1
     });
