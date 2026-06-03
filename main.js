@@ -656,9 +656,11 @@ function createNest(x, z, coreColor) {
     core.receiveShadow = true;
     nestGroup.add(core);
     
-    const domeGeom = new THREE.IcosahedronGeometry(3.6, 1);
+    const domeGeom = new THREE.IcosahedronGeometry(2.7, 1); // Shrunk radius from 3.6 to 2.7
     const domeMat = new THREE.MeshPhysicalMaterial({
-        color: coreColor, // Dynamically match the colony's signature color
+        color: coreColor,
+        emissive: coreColor, // Emissive color matching the nest core
+        emissiveIntensity: 1.8, // Glowing emissive intensity
         roughness: 0.1,
         metalness: 0.1,
         transmission: 0,
