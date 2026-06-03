@@ -95,8 +95,17 @@ export class PheromoneGrid {
         const data = imgData.data;
         
         for (let i = 0; i < res * res; i++) {
-            const h = Math.min(1.0, this.homeGrid[i] / 4.0);
-            const f = Math.min(1.0, this.foodGrid[i] / 4.0);
+            let h = 0;
+            const hVal = this.homeGrid[i];
+            if (hVal >= 3.0) h = 1.0;      // Dark/high frequency
+            else if (hVal >= 1.0) h = 0.60; // Mid frequency
+            else if (hVal >= 0.05) h = 0.25; // Light/low frequency
+
+            let f = 0;
+            const fVal = this.foodGrid[i];
+            if (fVal >= 3.0) f = 1.0;      // Dark/high frequency
+            else if (fVal >= 1.0) f = 0.60; // Mid frequency
+            else if (fVal >= 0.05) f = 0.25; // Light/low frequency
             
             const pxIdx = i * 4;
             
