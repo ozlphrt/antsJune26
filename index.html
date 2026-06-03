@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Ant Colony Simulation - Antigravity</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet">
+    <!-- Three.js and OrbitControls CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+
+    <!-- Three.js Canvas Container -->
+    <div id="canvas-container"></div>
+    
+    <!-- Camera Preset Panel & Toggle Button -->
+    <button id="btn-camera-preset" class="camera-preset-btn">📹</button>
+    <div id="camera-preset-menu" class="camera-preset-panel panel flex-col hidden">
+        <button class="preset-option-btn active" data-preset="default">🌐 Default View</button>
+        <button class="preset-option-btn" data-preset="battle">⚔️ Combat View</button>
+        <button class="preset-option-btn" data-preset="ant">🐜 Follow Leader</button>
+    </div>
+
+    <!-- Interactive Status Pills (Bottom Right, above camera) -->
+    <button id="btn-ant-pill" class="pill-btn status-pill ant-pill-pos">
+        <span class="pill-icon">🐜</span>
+        <span id="pill-ant-count" class="pill-value">0</span>
+    </button>
+    <div id="panel-ant-edit" class="edit-popup-panel panel hidden" style="bottom: 120px;">
+        <div class="slider-header">
+            <label for="popup-ant-count">Ants / Colony</label>
+            <span id="val-popup-ant-count">250</span>
+        </div>
+        <input type="range" id="popup-ant-count" min="100" max="2000" step="50" value="250">
+    </div>
+
+    <button id="btn-colony-pill" class="pill-btn status-pill col-pill-pos">
+        <span class="pill-icon">🏰</span>
+        <span id="pill-colony-count" class="pill-value">3</span>
+    </button>
+    <div id="panel-colony-edit" class="edit-popup-panel panel hidden" style="bottom: 170px;">
+        <div class="slider-header">
+            <label for="popup-colony-count">Colonies</label>
+            <span id="val-popup-colony-count">3</span>
+        </div>
+        <input type="range" id="popup-colony-count" min="2" max="6" step="1" value="3">
+    </div>
+
+    <!-- Settings Icon Button to toggle Dashboard panel visibility -->
+    <button id="btn-settings-toggle" class="settings-toggle-btn">⚙️</button>
+
+    <!-- Top Center Scoreboard -->
+    <div class="top-scoreboard panel flex-col">
+        <!-- Defeated Row -->
+        <div class="scoreboard-row">
+            <span class="scoreboard-title">Defeated</span>
+            <div id="container-defeated" class="stacked-bar-container"></div>
+        </div>
+
+        <!-- Food Row -->
+        <div class="scoreboard-row">
+            <span class="scoreboard-title">Food</span>
+            <div id="container-food" class="stacked-bar-container"></div>
+        </div>
+    </div>
+
+    <!-- UI Overlay Dashboard -->
+    <div class="dashboard flex-col hidden">
+        <header>
+            <h1>Ant3D</h1>
+            <p class="subtitle">Bionic Colony Simulation</p>
+        </header>
+
+        <!-- Stats Section -->
+        <section class="panel stats-panel">
+            <div class="panel-header">Simulation Stats</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-label">Total Population</span>
+                    <span id="stat-ants" class="stat-value highlight-cyan">0</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">Foraging Ants</span>
+                    <span id="stat-foraging" class="stat-value">0</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label">Render FPS</span>
+                    <span id="stat-fps" class="stat-value highlight-green">0</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Controls Section -->
+        <section class="panel controls-panel">
+            <div class="panel-header">Controls</div>
+            
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="control-colony-count">Colonies Count</label>
+                    <span id="val-colony-count">3</span>
+                </div>
+                <input type="range" id="control-colony-count" min="2" max="6" step="1" value="3">
+            </div>
+
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="control-ant-count">Ant Population</label>
+                    <span id="val-ant-count">250</span>
+                </div>
+                <input type="range" id="control-ant-count" min="100" max="2000" step="50" value="250">
+            </div>
+
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="control-ant-speed">Ant Speed</label>
+                    <span id="val-ant-speed">1.0</span>
+                </div>
+                <input type="range" id="control-ant-speed" min="0.5" max="4.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="control-evaporation">Pheromone Decay</label>
+                    <span id="val-evaporation">0.995</span>
+                </div>
+                <input type="range" id="control-evaporation" min="0.980" max="0.999" step="0.001" value="0.995">
+            </div>
+
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="control-sensor-angle">Sensor Angle</label>
+                    <span id="val-sensor-angle">35°</span>
+                </div>
+                <input type="range" id="control-sensor-angle" min="15" max="90" step="5" value="35">
+            </div>
+
+            <div class="control-group">
+                <div class="slider-header">
+                    <label for="control-sensor-dist">Sensor Distance</label>
+                    <span id="val-sensor-dist">3.0</span>
+                </div>
+                <input type="range" id="control-sensor-dist" min="1.0" max="8.0" step="0.5" value="3.0">
+            </div>
+            
+            <div class="control-group">
+                <label>View Mode</label>
+                <div class="button-toggle-group">
+                    <button id="btn-camera-orbit" class="active">Free Orbit</button>
+                    <button id="btn-camera-follow">Follow Ant</button>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button id="btn-spawn-food" class="btn-primary">Add Food Cluster</button>
+                <button id="btn-reset" class="btn-danger">Reset Simulation</button>
+        </section>
+
+        <!-- Legend Panel inside settings dashboard -->
+        <section class="panel legend-panel">
+            <div class="legend-title">Simulation Legend</div>
+            <div id="container-legend" class="legend-items"></div>
+        </section>
+
+        <!-- Instructions Overlay inside settings dashboard -->
+        <section class="panel instructions-panel">
+            <p><strong>Controls:</strong> Left Click + Drag to rotate. Right Click + Drag to pan. Scroll to zoom. Click "Add Food Cluster" then click on the terrain to spawn food!</p>
+        </section>
+    </div>
+
+    <!-- Modules Script -->
+    <script type="module" src="main.js"></script>
+</body>
+</html>
