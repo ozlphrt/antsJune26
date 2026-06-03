@@ -21,6 +21,12 @@ export class PheromoneGrid {
         this.canvas.height = this.resolution;
         this.ctx = this.canvas.getContext('2d');
         
+        // Secondary offscreen canvas to apply hardware-accelerated blur filtering
+        this.tempCanvas = document.createElement('canvas');
+        this.tempCanvas.width = this.resolution;
+        this.tempCanvas.height = this.resolution;
+        this.tempCtx = this.tempCanvas.getContext('2d');
+        
         // Create Canvas Texture
         this.texture = new THREE.CanvasTexture(this.canvas);
         this.texture.minFilter = THREE.LinearFilter;
@@ -123,7 +129,13 @@ export class PheromoneGrid {
             data[pxIdx + 3] = Math.floor(maxVal * 255); // Alpha intensity maps to 0.25, 0.60, 1.0
         }
         
-        this.ctx.putImageData(imgData, 0, 0);
+        this.tempCtx.putImageData(imgData, 0, 0);
+        
+        // Clear main canvas and draw blurred version
+        this.ctx.clearRect(0, 0, res, res);
+        this.ctx.filter = 'blur(1.8px)'; // Smooths out the jagged grid edges beautifully
+        this.ctx.drawImage(this.tempCanvas, 0, 0);
+        
         this.texture.needsUpdate = true;
     }
     
