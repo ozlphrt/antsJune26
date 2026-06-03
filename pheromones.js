@@ -98,15 +98,15 @@ export class PheromoneGrid {
             let h = 0;
             const hVal = this.homeGrid[i];
             if (hVal >= 0.05) {
-                const level = Math.min(16, Math.ceil(hVal * 4.0)); // Map 0.05..4.0+ to 1..16 steps
-                h = level / 16.0; // 16 discrete tones (1/16 to 16/16)
+                const level = Math.min(32, Math.ceil(hVal * 8.0)); // Map 0.05..4.0+ to 1..32 steps
+                h = 0.35 + (level / 32.0) * 0.65; // 32 discrete tones starting at 0.37 opacity floor
             }
 
             let f = 0;
             const fVal = this.foodGrid[i];
             if (fVal >= 0.05) {
-                const level = Math.min(16, Math.ceil(fVal * 4.0)); // Map 0.05..4.0+ to 1..16 steps
-                f = level / 16.0; // 16 discrete tones (1/16 to 16/16)
+                const level = Math.min(32, Math.ceil(fVal * 8.0)); // Map 0.05..4.0+ to 1..32 steps
+                f = 0.35 + (level / 32.0) * 0.65; // 32 discrete tones starting at 0.37 opacity floor
             }
             
             const pxIdx = i * 4;
