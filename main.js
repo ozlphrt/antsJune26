@@ -658,14 +658,14 @@ function createNest(x, z, coreColor) {
     
     const domeGeom = new THREE.IcosahedronGeometry(2.7, 1); // Shrunk radius from 3.6 to 2.7
     const domeMat = new THREE.MeshPhysicalMaterial({
-        color: coreColor,
-        emissive: coreColor, // Emissive color matching the nest core
-        emissiveIntensity: 1.8, // Glowing emissive intensity
-        roughness: 0.1,
+        color: 0x000000, // Black diffuse color so it ignores scene lighting
+        emissive: coreColor, // Emissive color matching the nest core (self-lit)
+        emissiveIntensity: 1.6, // Glowing emissive intensity
+        roughness: 0.15,
         metalness: 0.1,
         transmission: 0,
         transparent: true,
-        opacity: 0.35, // Subtle, balanced glass opacity
+        opacity: 0.5, // Subtle, balanced glass opacity
         depthWrite: false,
         flatShading: true // faceted glass reflections
     });
