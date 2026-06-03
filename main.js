@@ -653,39 +653,132 @@ function createNest(x, z, coreColor) {
     const nestGroup = new THREE.Group();
     const yPos = getTerrainHeight(x, z);
     
-    const coreGeom = new THREE.SphereGeometry(1.8, 16, 16);
-    const coreMat = new THREE.MeshStandardMaterial({
-        color: 0x000000, // Black diffuse to ignore scene lighting
-        emissive: coreColor, // Self-illuminated emissive color matching the colony color
-        emissiveIntensity: 2.5, // Bright glowing intensity
-        roughness: 0.15,
+    // 1. Deformed Organic Mud Mound
+    const moundGeom = new THREE.SphereGeometry(2.5, 32, 24);
+    const posAttr = moundGeom.attributes.position;
+    
+    for (let i = 0; i < posAttr.count; i++) {
+        let px = posAttr.getX(i);
+        let py = posAttr.getY(i);
+        let pz = posAttr.getZ(i);
+        
+        // Shift up so bottom of the sphere is at 0
+        py += 2.5;
+        
+        // Taper the shape to make a natural mound (wide at bottom, narrow at top)
+        const heightRatio = py / 5.0; // 0 to 1
+        const widthScale = (1.0 - heightRatio * 0.85);
+        px *= widthScale;
+        pz *= widthScale;
+        
+        // Add organic roughness/bumpy noise to mimic dirt/clay structure
+        const angle = Math.atan2(pz, px);
+        const noise = Math.sin(angle * 5) * Math.cos(py * 2.0) * 0.15 + Math.cos(angle * 3) * 0.1;
+        px += (px !== 0 ? px / Math.abs(px) : 0) * noise;
+        pz += (pz !== 0 ? pz / Math.abs(pz) : 0) * noise;
+        
+        // Create crater depression at the top center
+        if (heightRatio > 0.80) {
+            const distFromCenter = Math.sqrt(px * px + pz * pz);
+            py -= (0.8 - distFromCenter) * 0.9;
+        }
+        
+        posAttr.setXYZ(i, px, py, pz);
+    }
+    moundGeom.computeVertexNormals();
+    
+    const moundMat = new THREE.MeshStandardMaterial({
+        color: 0x483c32, // Natural dark taupe/mud clay
+        roughness: 0.95,
+        metalness: 0.05,
+        flatShading: true // Faceted look to mimic packed organic earth and stone clumps
+    });
+    
+    const mound = new THREE.Mesh(moundGeom, moundMat);
+    mound.castShadow = true;
+    mound.receiveShadow = true;
+    nestGroup.add(mound);
+    
+    // 2. Inner Bioluminescent Pool (inside crater)
+    const poolGeom = new THREE.SphereGeometry(0.7, 16, 12);
+    const poolMat = new THREE.MeshStandardMaterial({
+        color: 0x000000,
+        emissive: coreColor,
+        emissiveIntensity: 4.0,
+        roughness: 0.1,
         metalness: 0.1
     });
-    const core = new THREE.Mesh(coreGeom, coreMat);
-    core.position.y = 0.9;
-    core.castShadow = true;
-    core.receiveShadow = true;
-    nestGroup.add(core);
+    const pool = new THREE.Mesh(poolGeom, poolMat);
+    pool.position.y = 4.0;
+    nestGroup.add(pool);
     
-    const domeGeom = new THREE.SphereGeometry(2.6, 32, 32); // Smooth sphere geometry, slightly tighter 2.6 radius
-    const domeMat = new THREE.MeshPhysicalMaterial({
-        color: 0x000000, // Black diffuse color to ignore scene lighting
-        emissive: coreColor, // Emissive color matching the nest core (self-lit)
-        emissiveIntensity: 2.2, // Boosted glow intensity
-        roughness: 0.2,
-        metalness: 0.1,
-        transmission: 0,
-        transparent: true,
-        opacity: 0.4, // Subtle, soft transparent glow
-        depthWrite: false
-    });
-    const dome = new THREE.Mesh(domeGeom, domeMat);
-    dome.position.y = 0.9;
-    nestGroup.add(dome);
-    
-    const nestLight = new THREE.PointLight(coreColor, 3.0, 15);
-    nestLight.position.y = 1.5;
+    // 3. Glowing Point Light (illuminates the environment and crater)
+    const nestLight = new THREE.PointLight(coreColor, 4.0, 15);
+    nestLight.position.set(0, 4.2, 0);
+    nestLight.castShadow = true;
+    nestLight.shadow.bias = -0.002;
     nestGroup.add(nestLight);
+    
+    // 4. Bioluminescent Mushrooms on slopes
+    const mushroomCaps = [];
+    const mushroomCount = 3 + Math.floor(Math.random() * 2); // 3 to 4 mushrooms
+    
+    for (let j = 0; j < mushroomCount; j++) {
+        const angle = (j * Math.PI * 2) / mushroomCount + Math.random() * 0.4;
+        const height = 0.8 + Math.random() * 1.2; // lower to mid mound
+        
+        const heightRatio = height / 5.0;
+        const baseRadius = 2.5 * (1.0 - heightRatio * 0.85);
+        const mx = Math.cos(angle) * (baseRadius - 0.1);
+        const mz = Math.sin(angle) * (baseRadius - 0.1);
+        
+        // Mushroom stem
+        const stemHeight = 0.4 + Math.random() * 0.3;
+        const stemGeom = new THREE.CylinderGeometry(0.06, 0.08, stemHeight, 6);
+        const stemMat = new THREE.MeshStandardMaterial({
+            color: 0xd6cda4, // Pale beige stem
+            roughness: 0.8,
+            metalness: 0.05
+        });
+        const stem = new THREE.Mesh(stemGeom, stemMat);
+        stem.position.set(mx, height, mz);
+        
+        // Tilt stem pointing outward and slightly upward
+        stem.rotation.z = -Math.cos(angle) * 0.55;
+        stem.rotation.x = Math.sin(angle) * 0.55;
+        nestGroup.add(stem);
+        
+        // Mushroom glowing cap
+        const capGeom = new THREE.ConeGeometry(0.25, 0.28, 8);
+        const capMat = new THREE.MeshStandardMaterial({
+            color: 0x000000,
+            emissive: coreColor,
+            emissiveIntensity: 3.5,
+            roughness: 0.3,
+            metalness: 0.1
+        });
+        const cap = new THREE.Mesh(capGeom, capMat);
+        
+        // Position cap at stem tip
+        const offsetDir = new THREE.Vector3(Math.cos(angle), 1.0, Math.sin(angle)).normalize();
+        cap.position.set(
+            mx + offsetDir.x * (stemHeight * 0.5),
+            height + offsetDir.y * (stemHeight * 0.5),
+            mz + offsetDir.z * (stemHeight * 0.5)
+        );
+        cap.rotation.z = stem.rotation.z;
+        cap.rotation.x = stem.rotation.x;
+        
+        nestGroup.add(cap);
+        mushroomCaps.push(cap);
+    }
+    
+    // Store animated references in userData
+    nestGroup.userData = {
+        pool: pool,
+        light: nestLight,
+        mushroomCaps: mushroomCaps
+    };
     
     nestGroup.position.set(x, yPos, z);
     scene.add(nestGroup);
@@ -1100,11 +1193,24 @@ function animate(time) {
         combatParticles.update(dt);
     }
     
-    // 2. Nest Animations (rotate outer wireframe dome, pulse point lights for all nests)
+    // 2. Nest Animations (organic breathing pulse of bioluminescent pool and mushrooms)
     nests.forEach((nest) => {
-        nest.children[1].rotation.y += dt * 0.2;
-        nest.children[1].rotation.x += dt * 0.1;
-        nest.children[2].intensity = 3.0 + Math.sin(time * 0.003) * 1.5;
+        const pulse = 3.0 + Math.sin(time * 0.003) * 1.5;
+        if (nest.userData.light) {
+            nest.userData.light.intensity = pulse;
+        }
+        if (nest.userData.pool && nest.userData.pool.material) {
+            nest.userData.pool.material.emissiveIntensity = pulse;
+        }
+        if (nest.userData.mushroomCaps) {
+            nest.userData.mushroomCaps.forEach((cap) => {
+                if (cap.material) {
+                    // Pulsate cap light with a slight offset phase based on its 3D position
+                    const offset = cap.position.x * 2.0 + cap.position.z * 2.0;
+                    cap.material.emissiveIntensity = 2.5 + Math.sin(time * 0.004 + offset) * 1.5;
+                }
+            });
+        }
     });
     
     // 3. Camera Controls / Tracking Update
