@@ -966,8 +966,8 @@ export class ColonyManager {
                 this.foodCarriedMesh.setMatrixAt(i, hiddenDummy.matrix);
             }
             
-            // Set Color based on carrying status
-            this.instancedMesh.setColorAt(i, ant.state === 'explore' ? colorForaging : colorCarrying);
+            // Set Color based on signature colony color (unchanged when carrying food)
+            this.instancedMesh.setColorAt(i, colorForaging);
         }
         
         this.instancedMesh.instanceMatrix.needsUpdate = true;
