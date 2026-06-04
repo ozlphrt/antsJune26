@@ -1840,10 +1840,121 @@ function setupUI() {
                 });
 
             } else if (step === 4) {
+                let persHtml = `<div style="display:flex; flex-direction:column; gap:8px; margin: 10px 0; max-height: 140px; overflow-y:auto; padding-right:4px;">`;
+                for (let i = 0; i < chosenColonies; i++) {
+                    const colName = COLONY_NAMES[i] || `Colony ${i}`;
+                    const colHex = '#' + COLONY_CONFIGS[i].explore.toString(16).padStart(6, '0');
+                    if (!colonySetupStrategies[i]) {
+                        colonySetupStrategies[i] = { personality: 'dove', stances: {} };
+                    }
+                    const currentPers = colonySetupStrategies[i].personality;
+                    persHtml += `
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                            <span style="font-weight:700; font-size:0.75rem; color:${colHex};">${colName}:</span>
+                            <select class="wizard-pers-select" data-col="${i}" style="padding:4px; font-size:0.7rem; border-radius:6px; border:1px solid #ccc; font-family:inherit; background:#fff; color:#18181b;">
+                                <option value="dove" ${currentPers === 'dove' ? 'selected' : ''}>🕊️ Dove</option>
+                                <option value="hawk" ${currentPers === 'hawk' ? 'selected' : ''}>🦅 Hawk</option>
+                                <option value="grudger" ${currentPers === 'grudger' ? 'selected' : ''}>🤝 Tit-for-Tat</option>
+                                <option value="bully" ${currentPers === 'bully' ? 'selected' : ''}>😈 Bully</option>
+                            </select>
+                        </div>
+                    `;
+                }
+                persHtml += `</div>`;
+
                 content.innerHTML = `
-                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 4: Personalities & Stances</h3>
-                    <p>Setup is complete! You can customize each colony's personality and outgoing diplomatic stances directly in the <strong>top-right glassmorphic panel</strong> after launching.</p>
-                    <p style="font-weight:700; color:#18181b; margin-top:8px;">Ready to run?</p>
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 4: Choose Colony Personalities</h3>
+                    <p>Select the starting personality for each colony. This controls their game theory behavior.</p>
+                    ${persHtml}
+                `;
+                buttons.innerHTML = `
+                    <div style="display:flex; gap:6px; width:100%;">
+                        <button id="btn-step-back" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; background:#27272a; border-color:#27272a; border-radius:6px;">Back</button>
+                        <button id="btn-step-next" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; border-radius:6px;">Next ➔</button>
+                    </div>
+                `;
+
+                content.querySelectorAll('.wizard-pers-select').forEach(sel => {
+                    sel.addEventListener('change', (e) => {
+                        const colId = parseInt(sel.getAttribute('data-col'));
+                        colonySetupStrategies[colId].personality = e.target.value;
+                    });
+                });
+
+                document.getElementById('btn-step-back').addEventListener('click', () => {
+                    step = 3;
+                    renderWizardStep();
+                });
+                document.getElementById('btn-step-next').addEventListener('click', () => {
+                    step = 5;
+                    renderWizardStep();
+                });
+
+            } else if (step === 5) {
+                let stancesHtml = `<div style="display:flex; flex-direction:column; gap:8px; margin: 10px 0; max-height: 140px; overflow-y:auto; padding-right:4px;">`;
+                for (let i = 0; i < chosenColonies; i++) {
+                    const fromName = COLONY_NAMES[i] || `Colony ${i}`;
+                    const fromHex = '#' + COLONY_CONFIGS[i].explore.toString(16).padStart(6, '0');
+                    for (let j = 0; j < chosenColonies; j++) {
+                        if (i === j) continue;
+                        const toName = COLONY_NAMES[j] || `Colony ${j}`;
+                        const toHex = '#' + COLONY_CONFIGS[j].explore.toString(16).padStart(6, '0');
+                        if (!colonySetupStrategies[i].stances) {
+                            colonySetupStrategies[i].stances = {};
+                        }
+                        if (colonySetupStrategies[i].stances[j] === undefined) {
+                            colonySetupStrategies[i].stances[j] = 'Neutral';
+                        }
+                        const currentStance = colonySetupStrategies[i].stances[j];
+                        stancesHtml += `
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                                <span style="font-size:0.7rem; font-weight:700;"><span style="color:${fromHex};">${fromName}</span> ➔ <span style="color:${toHex};">${toName}</span>:</span>
+                                <select class="wizard-stance-select" data-from="${i}" data-to="${j}" style="padding:4px; font-size:0.7rem; border-radius:6px; border:1px solid #ccc; font-family:inherit; background:#fff; color:#18181b;">
+                                    <option value="Allied" ${currentStance === 'Allied' ? 'selected' : ''}>✓ Allied</option>
+                                    <option value="Neutral" ${currentStance === 'Neutral' ? 'selected' : ''}>• Neutral</option>
+                                    <option value="Hostile" ${currentStance === 'Hostile' ? 'selected' : ''}>✕ Hostile</option>
+                                </select>
+                            </div>
+                        `;
+                    }
+                }
+                stancesHtml += `</div>`;
+
+                content.innerHTML = `
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 5: Choose Diplomatic Stances</h3>
+                    <p>Select outgoing diplomatic stances. (Row ➔ Column Stance)</p>
+                    ${stancesHtml}
+                `;
+                buttons.innerHTML = `
+                    <div style="display:flex; gap:6px; width:100%;">
+                        <button id="btn-step-back" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; background:#27272a; border-color:#27272a; border-radius:6px;">Back</button>
+                        <button id="btn-step-next" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; border-radius:6px;">Next ➔</button>
+                    </div>
+                `;
+
+                content.querySelectorAll('.wizard-stance-select').forEach(sel => {
+                    sel.addEventListener('change', (e) => {
+                        const fromCol = parseInt(sel.getAttribute('data-from'));
+                        const toCol = parseInt(sel.getAttribute('data-to'));
+                        colonySetupStrategies[fromCol].stances[toCol] = e.target.value;
+                    });
+                });
+
+                document.getElementById('btn-step-back').addEventListener('click', () => {
+                    step = 4;
+                    renderWizardStep();
+                });
+                document.getElementById('btn-step-next').addEventListener('click', () => {
+                    step = 6;
+                    renderWizardStep();
+                });
+
+            } else if (step === 6) {
+                content.innerHTML = `
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 6: Launch Simulation</h3>
+                    <p>Setup is complete! All personalities and diplomatic relationships have been configured.</p>
+                    <p style="margin-top:6px;">You can still tweak these values live at any time using the glassmorphic strategy panel in the top-right.</p>
+                    <p style="font-weight:700; color:#18181b; margin-top:8px;">Launch the simulation now?</p>
                 `;
                 buttons.innerHTML = `
                     <div style="display:flex; gap:6px; width:100%;">
@@ -1853,7 +1964,7 @@ function setupUI() {
                 `;
 
                 document.getElementById('btn-step-back').addEventListener('click', () => {
-                    step = 3;
+                    step = 5;
                     renderWizardStep();
                 });
                 document.getElementById('btn-step-finish').addEventListener('click', () => {
