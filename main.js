@@ -599,7 +599,7 @@ function renderColonySetupPanel() {
             pTooltip = "Bully: Exploitative but cowardly. Preys on the cooperative, but flees if countered.";
         }
 
-        // Stances by other colonies towards this colony (i)
+        // Stances from this colony (i) towards other colonies (j)
         let stanceDotsHtml = `<div style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center; margin-top:6px; width:100%;">`;
         for (let j = 0; j < activeColonyCount; j++) {
             if (i === j) continue;
@@ -607,23 +607,23 @@ function renderColonySetupPanel() {
             const otherHex = '#' + otherConfig.explore.toString(16).padStart(6, '0');
             const otherShortName = ['GRN', 'BLU', 'GLD', 'PRP', 'TEL', 'LIM'][j] || `C${j}`;
 
-            if (!colonySetupStrategies[j].stances) {
-                colonySetupStrategies[j].stances = {};
+            if (!colonySetupStrategies[i].stances) {
+                colonySetupStrategies[i].stances = {};
             }
-            if (colonySetupStrategies[j].stances[i] === undefined) {
-                const jPers = colonySetupStrategies[j].personality;
-                if (jPers === 'hawk') {
-                    colonySetupStrategies[j].stances[i] = 'Hostile';
-                } else if (jPers === 'dove') {
-                    colonySetupStrategies[j].stances[i] = Math.random() > 0.4 ? 'Allied' : 'Neutral';
-                } else if (jPers === 'grudger') {
-                    colonySetupStrategies[j].stances[i] = Math.random() > 0.5 ? 'Allied' : 'Neutral';
+            if (colonySetupStrategies[i].stances[j] === undefined) {
+                const iPers = colonySetupStrategies[i].personality;
+                if (iPers === 'hawk') {
+                    colonySetupStrategies[i].stances[j] = 'Hostile';
+                } else if (iPers === 'dove') {
+                    colonySetupStrategies[i].stances[j] = Math.random() > 0.4 ? 'Allied' : 'Neutral';
+                } else if (iPers === 'grudger') {
+                    colonySetupStrategies[i].stances[j] = Math.random() > 0.5 ? 'Allied' : 'Neutral';
                 } else { // bully
-                    colonySetupStrategies[j].stances[i] = Math.random() > 0.5 ? 'Hostile' : 'Neutral';
+                    colonySetupStrategies[i].stances[j] = Math.random() > 0.5 ? 'Hostile' : 'Neutral';
                 }
             }
 
-            const stance = colonySetupStrategies[j].stances[i];
+            const stance = colonySetupStrategies[i].stances[j];
             
             // Allied: Solid green with check. Hostile: Solid red with X. Neutral: Solid dark grey.
             const bgStance = stance === 'Allied' ? '#22c55e' : stance === 'Hostile' ? '#ef4444' : 'rgba(0, 0, 0, 0.4)';
@@ -632,13 +632,13 @@ function renderColonySetupPanel() {
 
             // Explaining the stance on hover
             const stanceExplain = stance === 'Allied' 
-                ? `Allied: ${COLONY_NAMES[j]} is friendly and will cooperate/share food with ${name}.` 
+                ? `Allied: ${name} is friendly and will cooperate/share food with ${COLONY_NAMES[j]}.` 
                 : stance === 'Hostile' 
-                    ? `Hostile: ${COLONY_NAMES[j]} is aggressive and will attack ${name} on sight.` 
-                    : `Neutral: ${COLONY_NAMES[j]} will ignore ${name} unless attacked or provoked.`;
+                    ? `Hostile: ${name} is aggressive and will attack ${COLONY_NAMES[j]} on sight.` 
+                    : `Neutral: ${name} will ignore ${COLONY_NAMES[j]} unless attacked or provoked.`;
 
             stanceDotsHtml += `
-                <button class="setup-stance-dot" data-from="${j}" data-to="${i}" data-tooltip="${stanceExplain}" style="padding:4px 8px; border-radius:8px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.58rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:3px;">
+                <button class="setup-stance-dot" data-from="${i}" data-to="${j}" data-tooltip="${stanceExplain}" style="padding:4px 8px; border-radius:8px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.58rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:3px;">
                     <span style="font-size:0.62rem; line-height:1; font-weight:900;">${stanceIcon}</span> ${otherShortName}
                 </button>
             `;
