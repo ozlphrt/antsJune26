@@ -638,7 +638,7 @@ function renderColonySetupPanel() {
                     : `Neutral: ${COLONY_NAMES[j]} will ignore ${name} unless attacked or provoked.`;
 
             stanceDotsHtml += `
-                <button class="setup-stance-dot" data-from="${j}" data-to="${i}" title="${stanceExplain}" style="padding:4px 8px; border-radius:8px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.58rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:3px;">
+                <button class="setup-stance-dot" data-from="${j}" data-to="${i}" data-tooltip="${stanceExplain}" style="padding:4px 8px; border-radius:8px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.58rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:3px;">
                     <span style="font-size:0.62rem; line-height:1; font-weight:900;">${stanceIcon}</span> ${otherShortName}
                 </button>
             `;
@@ -652,7 +652,7 @@ function renderColonySetupPanel() {
                     <div class="ant-frame" style="position:relative; margin:2px 0; width:90px; height:120px; display:flex; align-items:center; justify-content:center; background:none; border-radius:10px; border:2px solid ${hex}; transition: all 0.15s ease; --colony-color: ${hex}; overflow:hidden;">
                         <img class="tint-headshot-lazy" data-personality="${strat.personality}" data-color="${hex}" style="width:82px; height:112px; object-fit:contain; margin-top:12px;" />
                         <!-- Personality capsule badge (inside the frame, full width) -->
-                        <span title="${pTooltip}" style="position:absolute; top:0; left:0; right:0; font-size:0.62rem; font-weight:800; background:#18181b; color:#fff; border-bottom:2px solid ${hex}; padding:3.5px 2px; text-transform:uppercase; letter-spacing:0.02em; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:help; z-index:2; border-top-left-radius:8px; border-top-right-radius:8px;">
+                        <span data-tooltip="${pTooltip}" style="position:absolute; top:0; left:0; right:0; font-size:0.62rem; font-weight:800; background:#18181b; color:#fff; border-bottom:2px solid ${hex}; padding:3.5px 2px; text-transform:uppercase; letter-spacing:0.02em; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:help; z-index:2; border-top-left-radius:8px; border-top-right-radius:8px;">
                             ${pLabel}
                         </span>
                     </div>
@@ -1120,6 +1120,60 @@ function createGraveyard(x, z) {
     return graveGroup;
 }
 
+// Global Custom Tooltip Manager
+function initCustomTooltip() {
+    let tooltipEl = document.getElementById('global-custom-tooltip');
+    if (!tooltipEl) {
+        tooltipEl = document.createElement('div');
+        tooltipEl.id = 'global-custom-tooltip';
+        tooltipEl.className = 'custom-tooltip';
+        document.body.appendChild(tooltipEl);
+    }
+
+    document.addEventListener('mouseover', (e) => {
+        const target = e.target.closest('[data-tooltip]');
+        if (target) {
+            const text = target.getAttribute('data-tooltip');
+            if (text) {
+                tooltipEl.innerHTML = text;
+                tooltipEl.style.opacity = '1';
+                positionTooltip(e, tooltipEl);
+            }
+        }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (tooltipEl.style.opacity === '1') {
+            positionTooltip(e, tooltipEl);
+        }
+    });
+
+    document.addEventListener('mouseout', (e) => {
+        const target = e.target.closest('[data-tooltip]');
+        if (target) {
+            tooltipEl.style.opacity = '0';
+        }
+    });
+}
+
+function positionTooltip(e, tooltipEl) {
+    const margin = 12;
+    let x = e.clientX + margin;
+    let y = e.clientY + margin;
+
+    // Boundary check so it doesn't overflow screen width/height
+    const rect = tooltipEl.getBoundingClientRect();
+    if (x + rect.width > window.innerWidth) {
+        x = e.clientX - rect.width - margin;
+    }
+    if (y + rect.height > window.innerHeight) {
+        y = e.clientY - rect.height - margin;
+    }
+
+    tooltipEl.style.left = `${x}px`;
+    tooltipEl.style.top = `${y}px`;
+}
+
 function init() {
     const container = document.getElementById('canvas-container');
     
@@ -1289,6 +1343,7 @@ function init() {
         }
     });
     
+    initCustomTooltip();
     requestAnimationFrame(animate);
 }
 
