@@ -647,15 +647,14 @@ function renderColonySetupPanel() {
 
         columnsHtml += `
             <div style="flex:1; display:flex; flex-direction:column; align-items:center; background:none; border:none; padding:4px 0; min-width:0;">
-                <!-- Personality capsule badge (closer to frame with high-contrast background) -->
-                <span title="${pTooltip}" style="font-size:0.62rem; font-weight:800; background:#18181b; color:#fff; border:1.5px solid ${hex}; padding:3px 6px; border-radius:10px; text-transform:uppercase; letter-spacing:0.02em; margin-bottom:2px; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:95%; cursor:help;">
-                    ${pLabel}
-                </span>
-
                 <!-- Clickable Ant Headshot (Cycles strategy, border only, background transparent) -->
                 <button class="setup-ant-click-btn" data-col="${i}" style="background:none; border:none; padding:0; cursor:pointer; outline:none; transition:transform 0.1s ease; border-radius:10px;">
-                    <div class="ant-frame" style="position:relative; margin:2px 0; width:90px; height:120px; display:flex; align-items:center; justify-content:center; background:none; border-radius:10px; border:2px solid ${hex}; transition: all 0.15s ease; --colony-color: ${hex};">
-                        <img class="tint-headshot-lazy" data-personality="${strat.personality}" data-color="${hex}" style="width:82px; height:112px; object-fit:contain;" />
+                    <div class="ant-frame" style="position:relative; margin:2px 0; width:90px; height:120px; display:flex; align-items:center; justify-content:center; background:none; border-radius:10px; border:2px solid ${hex}; transition: all 0.15s ease; --colony-color: ${hex}; overflow:hidden;">
+                        <img class="tint-headshot-lazy" data-personality="${strat.personality}" data-color="${hex}" style="width:82px; height:112px; object-fit:contain; margin-top:12px;" />
+                        <!-- Personality capsule badge (inside the frame, full width) -->
+                        <span title="${pTooltip}" style="position:absolute; top:0; left:0; right:0; font-size:0.62rem; font-weight:800; background:#18181b; color:#fff; border-bottom:2px solid ${hex}; padding:3.5px 2px; text-transform:uppercase; letter-spacing:0.02em; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:help; z-index:2; border-top-left-radius:8px; border-top-right-radius:8px;">
+                            ${pLabel}
+                        </span>
                     </div>
                 </button>
                 
