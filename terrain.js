@@ -7,17 +7,27 @@ let terrainOffsetX = 0;
 let terrainOffsetZ = 0;
 let nestPositions = [];
 
+// Precomputed height cache variables
+let heightGrid = null;
+const minCoord = -80;
+const maxCoord = 80;
+const res = 0.2;
+const invRes = 1 / res;
+const gridSize = Math.ceil((maxCoord - minCoord) * invRes) + 1;
+
 export function randomizeTerrainSeed() {
     terrainOffsetX = Math.random() * 10000 - 5000;
     terrainOffsetZ = Math.random() * 10000 - 5000;
+    heightGrid = null; // Invalidate cache
 }
 
 export function setNestPositionsForTerrain(positions) {
     nestPositions = positions;
+    heightGrid = null; // Invalidate cache
 }
 
-// Mathematical height function for the terrain
-export function getTerrainHeight(x, z) {
+// Compute natural height without cache
+function computeTerrainHeightRaw(x, z) {
     const rx = x + terrainOffsetX;
     const rz = z + terrainOffsetZ;
 
@@ -33,14 +43,18 @@ export function getTerrainHeight(x, z) {
     // Combine octaves
     let height = h1 + h2 + h3;
     
-    // Dynamically flatten terrain around each randomly generated nest location
-    nestPositions.forEach(nest => {
+    // Dynamically flatten terrain around each nest location
+    for (let i = 0; i < nestPositions.length; i++) {
+        const nest = nestPositions[i];
         const dx = x - nest.x;
         const dz = z - nest.z;
-        const dist = Math.sqrt(dx*dx + dz*dz);
-        const nestFlattenRadius = 6.0; // Smooth transition radius
-        if (dist < nestFlattenRadius) {
-            // Compute the natural unflattened height at the nest center
+        const distSq = dx*dx + dz*dz;
+        const nestFlattenRadius = 6.0;
+        const nestFlattenRadiusSq = nestFlattenRadius * nestFlattenRadius;
+        
+        if (distSq < nestFlattenRadiusSq) {
+            const dist = Math.sqrt(distSq);
+            // Compute natural unflattened height at the nest center
             const nrx = nest.x + terrainOffsetX;
             const nrz = nest.z + terrainOffsetZ;
             const nh1 = Math.sin(nrx * 0.02) * Math.cos(nrz * 0.02) * 8.0;
@@ -49,21 +63,64 @@ export function getTerrainHeight(x, z) {
             const nestNaturalHeight = nh1 + nh2 + nh3;
             
             const t = dist / nestFlattenRadius;
-            // Smoothstep interpolation to flatten smoothly
             const smoothFactor = t * t * (3 - 2 * t);
-            
-            // Blend from nest natural height (flat base) to surrounding natural height
             height = nestNaturalHeight * (1.0 - smoothFactor) + height * smoothFactor;
         }
-    });
+    }
     
     return height;
+}
+
+// Precomputes the height grid
+export function precomputeHeightGrid() {
+    heightGrid = new Float32Array(gridSize * gridSize);
+    for (let gz = 0; gz < gridSize; gz++) {
+        const z = minCoord + gz * res;
+        for (let gx = 0; gx < gridSize; gx++) {
+            const x = minCoord + gx * res;
+            heightGrid[gz * gridSize + gx] = computeTerrainHeightRaw(x, z);
+        }
+    }
+}
+
+// Fast mathematical height function for the terrain using bilinear interpolation
+export function getTerrainHeight(x, z) {
+    if (!heightGrid) {
+        precomputeHeightGrid();
+    }
+    
+    const gx = (x - minCoord) * invRes;
+    const gz = (z - minCoord) * invRes;
+    
+    const ix = Math.floor(gx);
+    const iz = Math.floor(gz);
+    
+    if (ix < 0 || ix >= gridSize - 1 || iz < 0 || iz >= gridSize - 1) {
+        return computeTerrainHeightRaw(x, z);
+    }
+    
+    const fx = gx - ix;
+    const fz = gz - iz;
+    
+    const idx = iz * gridSize + ix;
+    const h00 = heightGrid[idx];
+    const h10 = heightGrid[idx + 1];
+    const h01 = heightGrid[idx + gridSize];
+    const h11 = heightGrid[idx + gridSize + 1];
+    
+    return h00 * (1 - fx) * (1 - fz) +
+           h10 * fx * (1 - fz) +
+           h01 * (1 - fx) * fz +
+           h11 * fx * fz;
 }
 
 /**
  * Creates the terrain mesh with vertex coloring based on height and slope
  */
 export function createTerrainMesh(width, depth, segments) {
+    // Precompute height grid now that seed and nests are set
+    precomputeHeightGrid();
+
     const geometry = new THREE.PlaneGeometry(width, depth, segments, segments);
     
     // Rotate geometry to make it horizontal (parallel to X-Z plane)

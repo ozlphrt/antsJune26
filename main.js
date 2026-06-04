@@ -5,11 +5,14 @@
 import { getTerrainHeight, createTerrainMesh, randomizeTerrainSeed, setNestPositionsForTerrain } from './terrain.js';
 import { PheromoneGrid } from './pheromones.js';
 import { ColonyManager } from './colony.js';
+import { StatsEngine } from './stats.js';
 
 // Simulation Constants
 const WORLD_SIZE = 120;
 const INITIAL_ANTS = 250;
-const PHEROMONE_RES = 256;
+const PHEROMONE_RES = 128;
+const COLONY_NAMES = ['Green', 'Blue', 'Gold', 'Purple', 'Teal', 'Lime'];
+
 
 // Three.js Scene Variables
 let scene, camera, renderer, controls;
@@ -21,9 +24,19 @@ let lastTime = 0;
 let frameCount = 0;
 let fpsTimer = 0;
 let combatParticles;
-window.combatMode = 'conversion'; // Global combat scenario mode: 'respawn', 'removal', 'conversion'
+window.combatMode = 'removal'; // Global combat scenario mode: 'respawn', 'removal', 'conversion'
 let prevColonyDefeated = []; // Track previous values to animate changes
 let initialTotalPopulation = 0; // Starting total population of all active colonies
+window.statsEngine = new StatsEngine(); // Global stats engine
+let activeIntelTab = 'overview'; // Active dashboard tab
+let selectedNestIndex = -1; // Index of the currently selected nest (-1 if none)
+let lastPredictionTitle = ''; // Track last displayed prediction for toast popups
+let lastIntelUpdateTime = 0; // Throttle intel dashboard rendering to prevent flickering
+let colonySetupStrategies = {}; // Cache of colony personalities and stances
+let selectedSetupColonyId = 0; // Currently selected colony index in setup panel
+
+
+
 
 // High-performance combat particle system using points
 class CombatParticleSystem {
@@ -407,10 +420,29 @@ function rebuildScoreboardAndLegend() {
             seg.className = `bar-segment colony-segment-${i}`;
             seg.style.width = `${100 / activeColonyCount}%`;
             
-            const label = document.createElement('span');
+            const label = document.createElement('div');
             label.id = `defeated-text-${i}`;
-            label.className = 'bar-label';
-            label.innerText = '0';
+            label.className = 'bar-label number-dial';
+            
+            const strip = document.createElement('div');
+            strip.className = 'number-dial-strip';
+            
+            const topSlot = document.createElement('div');
+            topSlot.className = 'dial-num dial-top';
+            topSlot.innerText = '';
+            
+            const midSlot = document.createElement('div');
+            midSlot.className = 'dial-num dial-mid';
+            midSlot.innerText = '0';
+            
+            const botSlot = document.createElement('div');
+            botSlot.className = 'dial-num dial-bot';
+            botSlot.innerText = '';
+            
+            strip.appendChild(topSlot);
+            strip.appendChild(midSlot);
+            strip.appendChild(botSlot);
+            label.appendChild(strip);
             
             seg.appendChild(label);
             containerDefeated.appendChild(seg);
@@ -474,7 +506,195 @@ function rebuildScoreboardAndLegend() {
         foodItem.appendChild(foodText);
         containerLegend.appendChild(foodItem);
     }
+
+    // Render the personality/strategy setup panel
+    renderColonySetupPanel();
 }
+
+const headshotsCache = {};
+
+function getTintedHeadshot(personality, hexColor, callback) {
+    const cacheKey = `${personality}_${hexColor}`;
+    if (headshotsCache[cacheKey]) {
+        if (callback) callback(headshotsCache[cacheKey]);
+        return headshotsCache[cacheKey];
+    }
+
+    const imgUrl = `assets/${personality}.png`;
+    const img = new Image();
+    img.src = imgUrl;
+    img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+
+        // 1. Fill with the target colony color
+        ctx.fillStyle = hexColor;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 2. Multiply with grayscale details (boosted brightness for rich, bright color vibrancy)
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.filter = 'grayscale(100%) contrast(0.9) brightness(2.2)';
+        ctx.drawImage(img, 0, 0);
+
+        // 3. Mask out the original background using alpha channel
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.filter = 'none';
+        ctx.drawImage(img, 0, 0);
+
+        const dataUrl = canvas.toDataURL();
+        headshotsCache[cacheKey] = dataUrl;
+        if (callback) callback(dataUrl);
+    };
+    img.onerror = () => {
+        headshotsCache[cacheKey] = imgUrl;
+        if (callback) callback(imgUrl);
+    };
+    // Return a blank inline SVG as placeholder while loading
+    return 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
+}
+
+function renderColonySetupPanel() {
+    const list = document.getElementById('setup-colonies-list');
+    if (!list) return;
+
+    // Make sure strategies are initialized
+    for (let i = 0; i < activeColonyCount; i++) {
+        if (!colonySetupStrategies[i]) {
+            const defaultPersonalities = ['dove', 'hawk', 'grudger', 'bully', 'dove', 'hawk'];
+            colonySetupStrategies[i] = {
+                personality: defaultPersonalities[i] || 'dove',
+                stances: {}
+            };
+        }
+    }
+
+    let columnsHtml = `<div style="display:flex; gap:4px; justify-content:space-between; width:100%; padding:4px 0;">`;
+
+    for (let i = 0; i < activeColonyCount; i++) {
+        const config = COLONY_CONFIGS[i];
+        const hex = '#' + config.explore.toString(16).padStart(6, '0');
+        const name = COLONY_NAMES[i] || `C${i}`;
+        const strat = colonySetupStrategies[i];
+
+        // Personality cycle details
+        const pLabel = strat.personality === 'grudger' ? 'Tit-for-Tat' : (strat.personality.charAt(0).toUpperCase() + strat.personality.slice(1));
+
+        // Stances by other colonies towards this colony (i)
+        let stanceDotsHtml = `<div style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center; margin-top:5px; width:100%;">`;
+        for (let j = 0; j < activeColonyCount; j++) {
+            if (i === j) continue;
+            const otherConfig = COLONY_CONFIGS[j];
+            const otherHex = '#' + otherConfig.explore.toString(16).padStart(6, '0');
+            const otherShortName = ['GRN', 'BLU', 'GLD', 'PRP', 'TEL', 'LIM'][j] || `C${j}`;
+
+            if (!colonySetupStrategies[j].stances) {
+                colonySetupStrategies[j].stances = {};
+            }
+            if (colonySetupStrategies[j].stances[i] === undefined) {
+                const jPers = colonySetupStrategies[j].personality;
+                if (jPers === 'hawk') {
+                    colonySetupStrategies[j].stances[i] = 'Hostile';
+                } else if (jPers === 'dove') {
+                    colonySetupStrategies[j].stances[i] = Math.random() > 0.4 ? 'Allied' : 'Neutral';
+                } else if (jPers === 'grudger') {
+                    colonySetupStrategies[j].stances[i] = Math.random() > 0.5 ? 'Allied' : 'Neutral';
+                } else { // bully
+                    colonySetupStrategies[j].stances[i] = Math.random() > 0.5 ? 'Hostile' : 'Neutral';
+                }
+            }
+
+            const stance = colonySetupStrategies[j].stances[i];
+            
+            // Allied: Solid green with check. Hostile: Solid red with X. Neutral: Solid dark grey.
+            const bgStance = stance === 'Allied' ? '#22c55e' : stance === 'Hostile' ? '#ef4444' : 'rgba(0, 0, 0, 0.4)';
+            const stanceIcon = stance === 'Allied' ? '✓' : stance === 'Hostile' ? '✕' : '•';
+            const shadow = stance === 'Allied' ? '0 0 3px rgba(34, 197, 94, 0.5)' : stance === 'Hostile' ? '0 0 3px rgba(239, 68, 68, 0.5)' : 'none';
+
+            stanceDotsHtml += `
+                <button class="setup-stance-dot" data-from="${j}" data-to="${i}" title="${COLONY_NAMES[j]}'s stance to ${name}: ${stance}" style="padding:2.5px 5px; border-radius:6px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.46rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:2px;">
+                    <span style="font-size:0.5rem; line-height:1; font-weight:900;">${stanceIcon}</span> ${otherShortName}
+                </button>
+            `;
+        }
+        stanceDotsHtml += `</div>`;
+
+        columnsHtml += `
+            <div style="flex:1; display:flex; flex-direction:column; align-items:center; background:none; border:none; padding:4px 0; min-width:0;">
+                <!-- Personality capsule badge (closer to frame with high-contrast background) -->
+                <span style="font-size:0.48rem; font-weight:800; background:#18181b; color:#fff; border:1.5px solid ${hex}; padding:2px 5px; border-radius:10px; text-transform:uppercase; letter-spacing:0.02em; margin-bottom:1px; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:95%;">
+                    ${pLabel}
+                </span>
+
+                <!-- Clickable Ant Headshot (Cycles strategy, border only, background transparent) -->
+                <button class="setup-ant-click-btn" data-col="${i}" style="background:none; border:none; padding:0; cursor:pointer; outline:none; transition:transform 0.1s ease; border-radius:10px;">
+                    <div style="position:relative; margin:2px 0; width:90px; height:120px; display:flex; align-items:center; justify-content:center; background:none; border-radius:10px; border:2px solid ${hex}; transition: all 0.15s ease;">
+                        <img class="tint-headshot-lazy" data-personality="${strat.personality}" data-color="${hex}" style="width:82px; height:112px; object-fit:contain;" />
+                    </div>
+                </button>
+                
+                <!-- Clickable Stance Ring Dots (transformed to pills) -->
+                ${stanceDotsHtml}
+            </div>
+        `;
+    }
+
+    columnsHtml += `</div>`;
+    list.innerHTML = columnsHtml;
+
+    // Trigger lazy tint loading
+    list.querySelectorAll('.tint-headshot-lazy').forEach(img => {
+        const personality = img.getAttribute('data-personality');
+        const color = img.getAttribute('data-color');
+        getTintedHeadshot(personality, color, (dataUrl) => {
+            img.src = dataUrl;
+        });
+    });
+
+    // Wire Up Cycle Events
+    list.querySelectorAll('.setup-ant-click-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const colId = parseInt(btn.getAttribute('data-col'));
+            const pOrder = ['dove', 'hawk', 'grudger', 'bully'];
+            const currentIdx = pOrder.indexOf(colonySetupStrategies[colId].personality);
+            const nextIdx = (currentIdx + 1) % pOrder.length;
+            const nextPers = pOrder[nextIdx];
+            colonySetupStrategies[colId].personality = nextPers;
+            
+            // Re-assign stances to other colonies based on new personality
+            for (let j = 0; j < activeColonyCount; j++) {
+                if (colId === j) continue;
+                if (nextPers === 'hawk') {
+                    colonySetupStrategies[colId].stances[j] = 'Hostile';
+                } else if (nextPers === 'dove') {
+                    colonySetupStrategies[colId].stances[j] = Math.random() > 0.4 ? 'Allied' : 'Neutral';
+                } else if (nextPers === 'grudger') {
+                    colonySetupStrategies[colId].stances[j] = Math.random() > 0.5 ? 'Allied' : 'Neutral';
+                } else { // bully
+                    colonySetupStrategies[colId].stances[j] = Math.random() > 0.5 ? 'Hostile' : 'Neutral';
+                }
+            }
+            renderColonySetupPanel();
+        });
+    });
+
+    list.querySelectorAll('.setup-stance-dot').forEach(dot => {
+        dot.addEventListener('click', (e) => {
+            e.preventDefault();
+            const fromCol = parseInt(dot.getAttribute('data-from'));
+            const toCol = parseInt(dot.getAttribute('data-to'));
+            const sOrder = ['Allied', 'Neutral', 'Hostile'];
+            const currentStance = colonySetupStrategies[fromCol].stances[toCol] || 'Neutral';
+            const currentIdx = sOrder.indexOf(currentStance);
+            const nextIdx = (currentIdx + 1) % sOrder.length;
+            colonySetupStrategies[fromCol].stances[toCol] = sOrder[nextIdx];
+            renderColonySetupPanel();
+        });
+    });
+}
+
 
 function rebuildSimulation() {
     prevColonyDefeated = [];
@@ -577,6 +797,17 @@ function rebuildSimulation() {
         colManager.sensorAngle = sensorAngle;
         colManager.sensorDistance = sensorDistance;
         
+        // Apply configured game theory personality and stances
+        if (!colonySetupStrategies[i]) {
+            const defaultPersonalities = ['dove', 'hawk', 'grudger', 'bully', 'dove', 'hawk'];
+            colonySetupStrategies[i] = {
+                personality: defaultPersonalities[i] || 'dove',
+                stances: {}
+            };
+        }
+        colManager.personality = colonySetupStrategies[i].personality;
+        colManager.stances = { ...colonySetupStrategies[i].stances };
+        
         colonies.push(colManager);
     }
     
@@ -588,6 +819,9 @@ function rebuildSimulation() {
     
     // 6. UI elements
     rebuildScoreboardAndLegend();
+    
+    // Initialize/Reset stats engine
+    window.statsEngine.initColonies(colonies);
     
     // 7. View centering
     adjustCameraToFrameNests();
@@ -1012,10 +1246,23 @@ function init() {
     applyCameraPreset('default');
     
     // Ensure initial placement is instantly set without sliding
-    adjustCameraToFrameNests(true);
-    
     window.addEventListener('resize', onWindowResize);
     renderer.domElement.addEventListener('pointerdown', onCanvasClick);
+    
+    // Position floating nest card dynamically to follow the cursor
+    window.addEventListener('mousemove', (e) => {
+        if (selectedNestIndex !== -1) {
+            const card = document.getElementById('nest-stats-card');
+            if (card && !card.classList.contains('hidden')) {
+                let x = e.clientX + 15;
+                let y = e.clientY + 15;
+                if (x + 270 > window.innerWidth) x = e.clientX - 280;
+                if (y + 250 > window.innerHeight) y = e.clientY - 260;
+                card.style.left = `${x}px`;
+                card.style.top = `${y}px`;
+            }
+        }
+    });
     
     requestAnimationFrame(animate);
 }
@@ -1142,6 +1389,14 @@ function setupUI() {
         btnSpawnFood.innerText = 'Add Food Cluster';
     });
 
+    const btnApplySetup = document.getElementById('btn-apply-setup');
+    if (btnApplySetup) {
+        btnApplySetup.addEventListener('click', () => {
+            rebuildSimulation();
+        });
+    }
+
+
     const btnCamera = document.getElementById('btn-camera-preset');
     const cameraMenu = document.getElementById('camera-preset-menu');
     const btnSettings = document.getElementById('btn-settings-toggle');
@@ -1202,6 +1457,67 @@ function setupUI() {
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
     });
+
+    const intelPanel = document.getElementById('intel-panel');
+    const btnIntelPin = document.getElementById('btn-intel-pin');
+    const intelHoverTrigger = document.getElementById('intel-hover-trigger');
+
+    if (btnIntelPin && intelPanel && intelHoverTrigger) {
+        btnIntelPin.addEventListener('click', (e) => {
+            e.stopPropagation();
+            intelPanel.classList.toggle('pinned');
+            if (!intelPanel.classList.contains('pinned')) {
+                intelPanel.classList.add('hidden');
+            } else {
+                intelPanel.classList.remove('hidden');
+            }
+        });
+
+        intelHoverTrigger.addEventListener('mouseenter', () => {
+            if (!intelPanel.classList.contains('pinned')) {
+                intelPanel.classList.remove('hidden');
+            }
+        });
+
+        intelPanel.addEventListener('mouseleave', () => {
+            if (!intelPanel.classList.contains('pinned')) {
+                intelPanel.classList.add('hidden');
+            }
+        });
+    }
+
+    // Wire up Intel tab selectors
+    document.querySelectorAll('.intel-tab-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.intel-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            const selectedTab = btn.getAttribute('data-tab');
+            activeIntelTab = selectedTab;
+
+            document.querySelectorAll('.intel-tab-content').forEach(content => {
+                if (content.id === `tab-${selectedTab}`) {
+                    content.classList.remove('hidden');
+                } else {
+                    content.classList.add('hidden');
+                }
+            });
+            lastIntelUpdateTime = 0; // Force immediate render
+            renderIntelDashboard();
+        });
+    });
+
+    // Close overlays on document click
+    document.addEventListener('click', () => {
+        cameraMenu.classList.add('hidden');
+        panelColonyEdit.classList.add('hidden');
+        panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
+    });
+
+    // Prevent propagation inside panel clicks
+    intelPanel.addEventListener('click', (e) => e.stopPropagation());
 
     btnRestartPill.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1270,30 +1586,63 @@ function setupUI() {
             panelCombatEdit.classList.add('hidden');
         });
     });
+
+    const btnNestClose = document.getElementById('btn-nest-card-close');
+    if (btnNestClose) {
+        btnNestClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            selectedNestIndex = -1;
+            document.getElementById('nest-stats-card').classList.add('hidden');
+        });
+    }
 };
 
 
-// Raycast to place food sources on terrain click
+// Raycast to place food sources or select nests on canvas click
 function onCanvasClick(event) {
-    if (!isPlacingFood) return;
-    
     // Calculate normalized mouse coordinates (-1 to 1)
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
     
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObject(terrainMesh);
-    
+
+    if (isPlacingFood) {
+        const intersects = raycaster.intersectObject(terrainMesh);
+        if (intersects.length > 0) {
+            const pt = intersects[0].point;
+            colonies[0].addFoodSource(pt.x, pt.z, 250); // Adds to shared foods list
+            initialTotalFood += 250;
+            
+            // Reset Placement Mode
+            isPlacingFood = false;
+            const btnSpawnFood = document.getElementById('btn-spawn-food');
+            btnSpawnFood.classList.remove('waiting-click');
+            btnSpawnFood.innerText = 'Add Food Cluster';
+        }
+        return;
+    }
+
+    // Check if a Nest mesh was clicked
+    const intersects = raycaster.intersectObjects(nests, true);
     if (intersects.length > 0) {
-        const pt = intersects[0].point;
-        colonies[0].addFoodSource(pt.x, pt.z, 250); // Adds to shared foods list
-        initialTotalFood += 250;
-        
-        // Reset Placement Mode
-        isPlacingFood = false;
-        const btnSpawnFood = document.getElementById('btn-spawn-food');
-        btnSpawnFood.classList.remove('waiting-click');
-        btnSpawnFood.innerText = 'Add Food Cluster';
+        let hitObj = intersects[0].object;
+        let nestIndex = -1;
+        while (hitObj) {
+            nestIndex = nests.indexOf(hitObj);
+            if (nestIndex !== -1) break;
+            hitObj = hitObj.parent;
+        }
+
+        if (nestIndex !== -1) {
+            showNestStatsCard(nestIndex, event.clientX, event.clientY);
+        }
+    } else {
+        // Hide card if clicking empty space
+        const nestCard = document.getElementById('nest-stats-card');
+        if (nestCard) {
+            nestCard.classList.add('hidden');
+        }
+        selectedNestIndex = -1;
     }
 }
 
@@ -1602,6 +1951,163 @@ function animate(time) {
         containerDefeated.style.width = '100%';
     }
     
+    function updateNumberDial(dialElem, newVal, prevVal) {
+        if (!dialElem) return;
+        const strip = dialElem.querySelector('.number-dial-strip');
+        if (!strip) return;
+        
+        const topSlot = strip.querySelector('.dial-top');
+        const midSlot = strip.querySelector('.dial-mid');
+        const botSlot = strip.querySelector('.dial-bot');
+        
+        if (prevVal === undefined) {
+            midSlot.innerText = newVal;
+            topSlot.innerText = newVal + 1;
+            botSlot.innerText = Math.max(0, newVal - 1);
+            strip.style.transition = 'none';
+            strip.style.transform = 'translateY(-6px)';
+            return;
+        }
+        
+        if (prevVal === newVal) {
+            return;
+        }
+        
+        if (strip.classList.contains('roll-animating')) {
+            // Cancel current animation cleanly
+            strip.style.transition = 'none';
+            topSlot.style.transition = 'none';
+            midSlot.style.transition = 'none';
+            botSlot.style.transition = 'none';
+            
+            midSlot.innerText = newVal;
+            topSlot.innerText = newVal + 1;
+            botSlot.innerText = Math.max(0, newVal - 1);
+            
+            midSlot.style.opacity = '';
+            midSlot.style.transform = '';
+            topSlot.style.opacity = '';
+            topSlot.style.transform = '';
+            botSlot.style.opacity = '';
+            botSlot.style.transform = '';
+            
+            strip.style.transform = 'translateY(-6px)';
+            strip.classList.remove('roll-animating');
+            return;
+        }
+        
+        const duration = '850ms';
+        const ease = 'cubic-bezier(0.16, 1, 0.28, 1)'; // Ultra-premium ultra-soft easing
+        
+        if (newVal < prevVal) {
+            botSlot.innerText = newVal;
+            topSlot.innerText = prevVal;
+            
+            // Setup initial animation frame
+            strip.style.transition = 'none';
+            topSlot.style.transition = 'none';
+            midSlot.style.transition = 'none';
+            botSlot.style.transition = 'none';
+            
+            strip.style.transform = 'translateY(-6px)';
+            topSlot.style.opacity = '0';
+            midSlot.style.opacity = '1';
+            midSlot.style.transform = 'scale(1)';
+            botSlot.style.opacity = '0';
+            botSlot.style.transform = 'scale(0.82)';
+            
+            void strip.offsetWidth; // Force layout
+            
+            strip.classList.add('roll-animating');
+            strip.style.transition = `transform ${duration} ${ease}`;
+            strip.style.transform = 'translateY(-18px)';
+            
+            midSlot.style.transition = `opacity ${duration} ${ease}, transform ${duration} ${ease}`;
+            midSlot.style.opacity = '0';
+            midSlot.style.transform = 'scale(0.82)';
+            
+            botSlot.style.transition = `opacity ${duration} ${ease}, transform ${duration} ${ease}`;
+            botSlot.style.opacity = '1';
+            botSlot.style.transform = 'scale(1)';
+            
+            setTimeout(() => {
+                // Remove transitions before text swap to prevent visual jump/flicker
+                strip.style.transition = 'none';
+                topSlot.style.transition = 'none';
+                midSlot.style.transition = 'none';
+                botSlot.style.transition = 'none';
+                
+                midSlot.innerText = newVal;
+                topSlot.innerText = newVal + 1;
+                botSlot.innerText = Math.max(0, newVal - 1);
+                
+                midSlot.style.opacity = '';
+                midSlot.style.transform = '';
+                botSlot.style.opacity = '';
+                botSlot.style.transform = '';
+                topSlot.style.opacity = '';
+                topSlot.style.transform = '';
+                
+                strip.style.transform = 'translateY(-6px)';
+                void strip.offsetHeight; // Force layout repaint
+                strip.classList.remove('roll-animating');
+            }, 850);
+        } else {
+            topSlot.innerText = newVal;
+            botSlot.innerText = prevVal;
+            
+            // Setup initial animation frame
+            strip.style.transition = 'none';
+            topSlot.style.transition = 'none';
+            midSlot.style.transition = 'none';
+            botSlot.style.transition = 'none';
+            
+            strip.style.transform = 'translateY(-6px)';
+            botSlot.style.opacity = '0';
+            midSlot.style.opacity = '1';
+            midSlot.style.transform = 'scale(1)';
+            topSlot.style.opacity = '0';
+            topSlot.style.transform = 'scale(0.82)';
+            
+            void strip.offsetWidth; // Force layout
+            
+            strip.classList.add('roll-animating');
+            strip.style.transition = `transform ${duration} ${ease}`;
+            strip.style.transform = 'translateY(6px)';
+            
+            midSlot.style.transition = `opacity ${duration} ${ease}, transform ${duration} ${ease}`;
+            midSlot.style.opacity = '0';
+            midSlot.style.transform = 'scale(0.82)';
+            
+            topSlot.style.transition = `opacity ${duration} ${ease}, transform ${duration} ${ease}`;
+            topSlot.style.opacity = '1';
+            topSlot.style.transform = 'scale(1)';
+            
+            setTimeout(() => {
+                // Remove transitions before text swap to prevent visual jump/flicker
+                strip.style.transition = 'none';
+                topSlot.style.transition = 'none';
+                midSlot.style.transition = 'none';
+                botSlot.style.transition = 'none';
+                
+                midSlot.innerText = newVal;
+                topSlot.innerText = newVal + 1;
+                botSlot.innerText = Math.max(0, newVal - 1);
+                
+                midSlot.style.opacity = '';
+                midSlot.style.transform = '';
+                topSlot.style.opacity = '';
+                topSlot.style.transform = '';
+                botSlot.style.opacity = '';
+                botSlot.style.transform = '';
+                
+                strip.style.transform = 'translateY(-6px)';
+                void strip.offsetHeight; // Force layout repaint
+                strip.classList.remove('roll-animating');
+            }, 850);
+        }
+    }
+
     for (let i = 0; i < activeColonyCount; i++) {
         let scorePct = 100 / activeColonyCount;
         if (totalScoreValue > 0) {
@@ -1615,13 +2121,8 @@ function animate(time) {
         
         if (barSeg && labelText) {
             barSeg.style.width = scorePct + '%';
-            labelText.innerText = scorePct > 4 ? colonyScoreValue[i] : "";
-            
-            if (prevVal !== undefined && newVal !== prevVal) {
-                labelText.classList.remove('label-flash');
-                void labelText.offsetWidth; // Trigger reflow to restart animation
-                labelText.classList.add('label-flash');
-            }
+            labelText.style.opacity = scorePct > 4 ? '1' : '0';
+            updateNumberDial(labelText, newVal, prevVal);
         }
         prevColonyDefeated[i] = newVal;
     }
@@ -1664,6 +2165,27 @@ function animate(time) {
     
     const totalForaging = colonies.reduce((sum, c) => sum + c.ants.filter(a => a.state === 'explore').length, 0);
     document.getElementById('stat-foraging').innerText = totalForaging;
+    
+    // Update Stats Engine & Live Ticker
+    if (window.statsEngine) {
+        window.statsEngine.update(colonies, terrainMesh, dt);
+
+
+        // Update stats card if visible
+        if (selectedNestIndex !== -1) {
+            updateNestStatsCard();
+        }
+        
+        // Render Intel Dashboard if visible (throttled to 200ms to eliminate flickering)
+        const intelPanel = document.getElementById('intel-panel');
+        if (intelPanel && !intelPanel.classList.contains('hidden')) {
+            const now = Date.now();
+            if (now - lastIntelUpdateTime > 200) {
+                renderIntelDashboard();
+                lastIntelUpdateTime = now;
+            }
+        }
+    }
     
     // 5. Update floating health bags
     for (let i = floatingHealthBags.length - 1; i >= 0; i--) {
@@ -1768,6 +2290,587 @@ function animate(time) {
     renderer.render(scene, camera);
 }
 
+function renderIntelDashboard() {
+    if (!window.statsEngine) return;
+
+    // ── Shared helpers ──────────────────────────────────────────
+    const getColName = (colId) => COLONY_NAMES[colId] !== undefined ? COLONY_NAMES[colId] : `C${colId}`;
+
+    // Build a colony pill badge: filled bg, white dot, white text
+    const colPill = (colId, hexColor) => {
+        const r = parseInt(hexColor.slice(1,3),16);
+        const g = parseInt(hexColor.slice(3,5),16);
+        const b = parseInt(hexColor.slice(5,7),16);
+        return `<span class="col-pill" style="background:${hexColor};color:#fff;border:1.5px solid rgba(255,255,255,0.2);">
+                  <span class="dot" style="background:rgba(255,255,255,0.55);"></span>${getColName(colId)}</span>`;
+    };
+
+    // Inline colony pill (light tinted bg, colored text) for use in white-bg rows
+    const colPillLight = (colId, hexColor) => {
+        const r = parseInt(hexColor.slice(1,3),16);
+        const g = parseInt(hexColor.slice(3,5),16);
+        const b = parseInt(hexColor.slice(5,7),16);
+        return `<span class="col-pill" style="background:rgba(${r},${g},${b},0.12);color:${hexColor};border:1.5px solid rgba(${r},${g},${b},0.3);">
+                  <span class="dot" style="background:${hexColor};"></span>${getColName(colId)}</span>`;
+    };
+
+    // Compact colony pill (dot + abbreviated name) for matrix / narrow spaces
+    const colPillCompact = (colId, hexColor, light = false) => {
+        const shortNames = ['GRN', 'BLU', 'GLD', 'PRP', 'TEL', 'LIM'];
+        const name = shortNames[colId] || `C${colId}`;
+        const r = parseInt(hexColor.slice(1,3),16);
+        const g = parseInt(hexColor.slice(3,5),16);
+        const b = parseInt(hexColor.slice(5,7),16);
+        if (light) {
+            return `<span class="col-pill compact" style="background:rgba(${r},${g},${b},0.12);color:${hexColor};border:1px solid rgba(${r},${g},${b},0.3);">
+                      <span class="dot" style="background:${hexColor};"></span>${name}</span>`;
+        } else {
+            return `<span class="col-pill compact" style="background:${hexColor};color:#fff;border:1px solid rgba(255,255,255,0.2);">
+                      <span class="dot" style="background:rgba(255,255,255,0.55);"></span>${name}</span>`;
+        }
+    };
+
+    // HP distribution bar + legend
+    const hpBarHtml = (buckets) => {
+        const tot = buckets.reduce((a,b)=>a+b,0)||1;
+        const p = buckets.map(b=>(b/tot*100).toFixed(1));
+        return `<div class="hp-bar-wrap">
+          <div class="hp-seg-bar">
+            <div style="width:${p[0]}%;background:#ef4444;"></div>
+            <div style="width:${p[1]}%;background:#f97316;"></div>
+            <div style="width:${p[2]}%;background:#eab308;"></div>
+            <div style="width:${p[3]}%;background:#22c55e;"></div>
+          </div>
+          <div class="hp-legend">
+            <span class="hp-legend-item" style="color:#ef4444;" title="Critical: 0–25% HP"><span class="hp-legend-dot" style="background:#ef4444;"></span>Crit ${Math.round(p[0])}%</span>
+            <span class="hp-legend-item" style="color:#f97316;" title="Low: 26–50% HP"><span class="hp-legend-dot" style="background:#f97316;"></span>Low ${Math.round(p[1])}%</span>
+            <span class="hp-legend-item" style="color:#eab308;" title="Mid: 51–75% HP"><span class="hp-legend-dot" style="background:#eab308;"></span>Mid ${Math.round(p[2])}%</span>
+            <span class="hp-legend-item" style="color:#22c55e;" title="Full: 76–100% HP"><span class="hp-legend-dot" style="background:#22c55e;"></span>Full ${Math.round(p[3])}%</span>
+          </div>
+        </div>`;
+    };
+
+    // Sparkline SVG
+    const sparklineHtml = (data, color, uid) => {
+        if (!data || data.length < 2) return `<div style="height:38px;background:rgba(0,0,0,0.03);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;color:#aaa;">no data yet</div>`;
+        const W=258, H=38;
+        const maxV=Math.max(...data,1), minV=Math.min(...data,0);
+        const range=maxV-minV||1;
+        const xs=data.map((_,i)=>(i/(data.length-1))*W);
+        const ys=data.map(v=>H-3-((v-minV)/range)*(H-6));
+        const pts=xs.map((x,i)=>`${x},${ys[i]}`);
+        const areaD=`M${pts[0]} L${pts.join(' L')} L${W},${H} L0,${H} Z`;
+        const gid=`sg_${uid}`;
+        return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:38px;" preserveAspectRatio="none">
+          <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+          </linearGradient></defs>
+          <path d="${areaD}" fill="url(#${gid})"/>
+          <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${xs[xs.length-1]}" cy="${ys[ys.length-1]}" r="2.5" fill="${color}" opacity="0.9"/>
+        </svg>`;
+    };
+
+    // ── OVERVIEW TAB ────────────────────────────────────────────
+    if (activeIntelTab === 'overview') {
+        const container = document.getElementById('tab-overview');
+        if (!container) return;
+
+        const initPerColony = initialTotalPopulation > 0 ? Math.round(initialTotalPopulation / colonies.length) : 100;
+        const totalFood = colonies.reduce((s,c)=>s+c.foodCollected,0);
+        const intensity = window.statsEngine.battleIntensity || 0;
+
+        // Intensity color
+        const iColor = intensity < 30 ? '#22c55e' : intensity < 65 ? '#f97316' : '#ef4444';
+        const iLabel = intensity < 15 ? 'Quiet' : intensity < 35 ? 'Skirmish' : intensity < 65 ? 'Moderate' : intensity < 85 ? 'High' : '🔥 Intense';
+
+        let html = '';
+
+        // ── Section: Colony Population at a Glance ──
+        html += `<div class="intel-widget">
+          <div class="intel-section-title">⚡ Colony Status</div>`;
+
+        colonies.forEach(c => {
+            const hex = '#' + c.exploreColor.getHexString();
+            const r = Math.round(c.exploreColor.r * 255);
+            const g = Math.round(c.exploreColor.g * 255);
+            const b = Math.round(c.exploreColor.b * 255);
+            const risk = c.extinctionRisk || 0;
+            const slope = c.populationSlope || 0;
+            const trendIcon = slope > 0.2 ? '↑' : slope < -0.2 ? '↓' : '→';
+            const trendColor = slope > 0.2 ? '#22c55e' : slope < -0.2 ? '#ef4444' : '#71717a';
+            const hp = c.hpBuckets || [0,0,0,10];
+            const hpTot = hp.reduce((a,b)=>a+b,0)||1;
+            const healthScore = Math.round(((hp[2]+hp[3])/hpTot)*100);
+            const aggPct = Math.round((c.aggressionIndex||0)*100);
+            const threat = c.nearestThreatDist||9999;
+            const threatPct = threat<9999 ? Math.round(Math.max(0,(1-threat/60))*100) : 0;
+            let riskClass='risk-low', riskText='Stable';
+            if (risk>=70){riskClass='risk-high';riskText='Critical!';}
+            else if (risk>=40){riskClass='risk-medium';riskText='Vulnerable';}
+
+            html += `<div class="vitals-colony-block">
+              <div class="vitals-header">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  ${colPill(c.colonyId, hex)}
+                  <span style="font-size:0.52rem; font-weight:800; background:rgba(0,0,0,0.05); color:var(--text-secondary); padding:1px 4px; border-radius:4px; display:inline-flex; align-items:center; gap:3px; text-transform:uppercase;">
+                    <img class="tint-headshot-lazy" data-personality="${c.personality || 'dove'}" data-color="${hex}" style="width: 10px; height: 10px; object-fit: contain;" />
+                    ${c.personality === 'grudger' ? 'Tit-for-Tat' : (c.personality || 'dove')}
+                  </span>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px;">
+                  <span style="font-size:0.62rem;font-weight:700;color:${trendColor};">${trendIcon} ${slope>0?'+':''}${slope.toFixed(1)}/s</span>
+                  <span class="risk-badge ${riskClass}">${riskText}</span>
+                </div>
+              </div>
+              <div class="vitals-stats-row">
+                <div class="vitals-stat-cell">
+                  <div class="vitals-stat-num" style="color:${hex};">${c.ants.length}</div>
+                  <div class="vitals-stat-label">Ants</div>
+                </div>
+                <div class="vitals-stat-cell">
+                  <div class="vitals-stat-num">${healthScore}%</div>
+                  <div class="vitals-stat-label">Health</div>
+                </div>
+                <div class="vitals-stat-cell">
+                  <div class="vitals-stat-num">${aggPct}%</div>
+                  <div class="vitals-stat-label">Combat</div>
+                </div>
+                <div class="vitals-stat-cell">
+                  <div class="vitals-stat-num" style="color:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};">${threatPct}%</div>
+                  <div class="vitals-stat-label">Threat</div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:0.56rem;color:var(--text-secondary);font-weight:700;text-transform:uppercase;margin-bottom:3px;">HP Profile</div>
+                ${hpBarHtml(hp)}
+              </div>
+            </div>`;
+        });
+
+        html += `</div>`;
+
+        // ── Section: Battle Intensity ──
+        html += `<div class="intel-widget">
+          <div class="intel-section-title">⚔️ Battle Intensity</div>
+          <div class="battle-intensity-gauge">
+            <div class="intensity-label-row">
+              <span>${iLabel}</span>
+              <span class="intensity-label-val" style="color:${iColor};">${Math.round(intensity)}%</span>
+            </div>
+            <div class="intensity-bar-track">
+              <div class="intensity-bar-fill" style="width:${intensity}%;background:linear-gradient(90deg,#22c55e ${100-intensity}%,${iColor} 100%);"></div>
+            </div>
+            <div style="font-size:0.58rem;color:var(--text-secondary);">Kills in last 10s: <strong style="color:#18181b;">${window.statsEngine.recentKillTimes.length}</strong></div>
+          </div>
+        </div>`;
+
+        // ── Section: Food Dominance ──
+        html += `<div class="intel-widget">
+          <div class="intel-section-title">🌿 Food Dominance</div>
+          <div style="display:flex;height:14px;border-radius:6px;overflow:hidden;gap:1px;">
+            ${colonies.map(c=>{
+              const hex='#'+c.exploreColor.getHexString();
+              const pct = totalFood>0 ? (c.foodCollected/totalFood)*100 : (100/colonies.length);
+              return `<div style="width:${pct}%;background:${hex};transition:width 0.5s ease;" title="${getColName(c.colonyId)}: ${c.foodCollected}"></div>`;
+            }).join('')}
+          </div>
+          <div style="display:flex;justify-content:space-around;margin-top:7px;flex-wrap:wrap;gap:4px;">
+            ${colonies.map(c=>{
+              const hex='#'+c.exploreColor.getHexString();
+              const pct = totalFood>0 ? (c.foodCollected/totalFood*100).toFixed(0) : Math.round(100/colonies.length);
+              return `<div style="text-align:center;">
+                ${colPillLight(c.colonyId, hex)}
+                <div style="font-size:0.78rem;font-weight:900;color:${hex};margin-top:3px;">${pct}%</div>
+                <div style="font-size:0.55rem;color:var(--text-secondary);">${c.foodCollected} units</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+
+        // ── Section: Mini Map ──
+        html += `<div class="intel-widget">
+          <div class="intel-section-title">🗺 Territory Map</div>
+          <div class="mini-map-wrap">
+            <canvas id="mini-map-canvas" width="258" height="120"></canvas>
+          </div>
+        </div>`;
+
+        container.innerHTML = html;
+
+        // Draw mini map
+        renderMiniMap();
+    }
+
+    // ── COLONIES TAB ────────────────────────────────────────────
+    if (activeIntelTab === 'colonies') {
+        const container = document.getElementById('tab-colonies');
+        if (!container) return;
+
+        let html = '';
+
+        colonies.forEach((c, ci) => {
+            const hex = '#' + c.exploreColor.getHexString();
+            const hist = window.statsEngine.histories[c.colonyId];
+            const kd = (c.kdRatio||0).toFixed(2);
+            const slope = c.populationSlope||0;
+            const trendIcon = slope>0.2?'↑':slope<-0.2?'↓':'→';
+            const trendColor = slope>0.2?'#22c55e':slope<-0.2?'#ef4444':'#71717a';
+            const risk = c.extinctionRisk||0;
+            const riskColor = risk>=70?'#ef4444':risk>=40?'#f97316':'#22c55e';
+            const aggPct = Math.round((c.aggressionIndex||0)*100);
+            const hp = c.hpBuckets||[0,0,0,10];
+            const killsRow = window.statsEngine.killMatrix[c.colonyId]||{};
+            const kills = Object.values(killsRow).reduce((a,b)=>a+b,0);
+            const deaths = window.statsEngine.deathCounts[c.colonyId]||0;
+            const threat = c.nearestThreatDist||9999;
+            const threatPct = threat<9999?Math.round(Math.max(0,(1-threat/60))*100):0;
+
+            html += `<div class="intel-widget colony-detail-block" style="border-left:3px solid ${hex};padding-left:9px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  ${colPill(c.colonyId, hex)}
+                  <span style="font-size:0.52rem; font-weight:800; background:rgba(0,0,0,0.05); color:var(--text-secondary); padding:1px 4px; border-radius:4px; display:inline-flex; align-items:center; gap:3px; text-transform:uppercase;">
+                    <img class="tint-headshot-lazy" data-personality="${c.personality || 'dove'}" data-color="${hex}" style="width: 12px; height: 12px; object-fit: contain;" />
+                    ${c.personality === 'grudger' ? 'Tit-for-Tat' : (c.personality || 'dove')}
+                  </span>
+                </div>
+                <span style="font-size:0.65rem;font-weight:700;display:flex;align-items:center;gap:5px;">
+                  <span style="color:${trendColor};">${trendIcon} ${slope>0?'+':''}${slope.toFixed(1)}/s</span>
+                  <span style="color:${riskColor};background:rgba(0,0,0,0.04);padding:2px 6px;border-radius:6px;">Risk ${Math.round(risk)}%</span>
+                </span>
+              </div>`;
+
+            // Sparkline
+            html += `<div style="margin-bottom:6px;">${sparklineHtml(hist?hist.population:[], hex, c.colonyId)}</div>`;
+
+            // Stats grid
+            html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:7px;">
+              <div class="vitals-stat-cell">
+                <div class="vitals-stat-num" style="color:${hex};">${c.ants.length}</div>
+                <div class="vitals-stat-label">Ants</div>
+              </div>
+              <div class="vitals-stat-cell">
+                <div class="vitals-stat-num">${Math.round(c.meanHp||0)}</div>
+                <div class="vitals-stat-label">Avg HP</div>
+              </div>
+              <div class="vitals-stat-cell">
+                <div class="vitals-stat-num" style="color:${kills>deaths?'#22c55e':'#ef4444'};">${kd}</div>
+                <div class="vitals-stat-label">K/D</div>
+              </div>
+              <div class="vitals-stat-cell">
+                <div class="vitals-stat-num">${aggPct}%</div>
+                <div class="vitals-stat-label">Combat</div>
+              </div>
+            </div>`;
+
+            // Threat row
+            html += `<div style="margin-bottom:7px;">
+              <div style="display:flex;justify-content:space-between;font-size:0.58rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;margin-bottom:3px;">
+                <span>☢ Nearest Enemy</span>
+                <span style="color:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};">${threat<9999?Math.round(threat)+'m away':'None detected'}</span>
+              </div>
+              <div class="threat-bar-row">
+                <div class="threat-bar-track">
+                  <div class="threat-bar-fill" style="width:${threatPct}%;background:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};"></div>
+                </div>
+              </div>
+            </div>`;
+
+            // HP bar
+            html += `<div>
+              <div style="font-size:0.56rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">HP Distribution</div>
+              ${hpBarHtml(hp)}
+            </div>`;
+
+            html += `</div>`;
+        });
+
+        container.innerHTML = html;
+    }
+
+    // ── COMBAT TAB ──────────────────────────────────────────────
+    if (activeIntelTab === 'combat') {
+        const container = document.getElementById('tab-combat');
+        if (!container) return;
+
+        let html = '';
+
+        // ── Kill Attribution Matrix ──
+        html += `<div class="intel-widget">
+          <div class="intel-section-title">🎯 Kill Attribution Matrix
+            <span style="font-size:0.55rem;font-weight:400;text-transform:none;color:var(--text-secondary);margin-left:auto;">Row = Attacker · Col = Victim</span>
+          </div>
+          <table class="km-table">
+            <tr>
+              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);">↓ Atk \\ Vic →</th>`;
+        colonies.forEach(c => {
+            const hex = '#' + c.exploreColor.getHexString();
+            html += `<th style="color:${hex};">${colPillCompact(c.colonyId, hex, true)}</th>`;
+        });
+        html += `</tr>`;
+
+        colonies.forEach(attacker => {
+            const aHex = '#' + attacker.exploreColor.getHexString();
+            const ar = Math.round(attacker.exploreColor.r * 255);
+            const ag = Math.round(attacker.exploreColor.g * 255);
+            const ab = Math.round(attacker.exploreColor.b * 255);
+            html += `<tr><th class="km-attacker-label">${colPillCompact(attacker.colonyId, aHex, true)}</th>`;
+            colonies.forEach(victim => {
+                if (attacker.colonyId === victim.colonyId) {
+                    html += `<td class="km-diag">—</td>`;
+                } else {
+                    const row = window.statsEngine.killMatrix[attacker.colonyId]||{};
+                    const kills = row[victim.colonyId]||0;
+                    if (kills > 0) {
+                        const alpha = Math.min(1.0, 0.3 + kills * 0.055);
+                        const bg = `rgba(${ar},${ag},${ab},${alpha})`;
+                        html += `<td style="background:${bg};color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.6);border:1px solid rgba(${ar},${ag},${ab},0.8);" title="${getColName(attacker.colonyId)} defeated ${kills}× ${getColName(victim.colonyId)}">${kills}</td>`;
+                    } else {
+                        html += `<td class="km-empty">·</td>`;
+                    }
+                }
+            });
+            html += `</tr>`;
+        });
+        html += `</table></div>`;
+
+        // ── Diplomatic Stances Matrix ──
+        html += `<div class="intel-widget" style="margin-top: 8px;">
+          <div class="intel-section-title">🕊️ Diplomatic Stances Matrix
+            <span style="font-size:0.55rem;font-weight:400;text-transform:none;color:var(--text-secondary);margin-left:auto;">Row's stance towards Column</span>
+          </div>
+          <table class="km-table">
+            <tr>
+              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);">↓ Stance \\ vs →</th>`;
+        colonies.forEach(c => {
+            const hex = '#' + c.exploreColor.getHexString();
+            html += `<th style="color:${hex};">${colPillCompact(c.colonyId, hex, true)}</th>`;
+        });
+        html += `</tr>`;
+
+        colonies.forEach(attacker => {
+            const aHex = '#' + attacker.exploreColor.getHexString();
+            html += `<tr><th class="km-attacker-label">${colPillCompact(attacker.colonyId, aHex, true)}</th>`;
+            colonies.forEach(victim => {
+                if (attacker.colonyId === victim.colonyId) {
+                    html += `<td class="km-diag">—</td>`;
+                } else {
+                    const stance = attacker.stances[victim.colonyId] || 'Neutral';
+                    let bg = 'rgba(0,0,0,0.03)';
+                    let color = '#71717a';
+                    let border = 'rgba(0,0,0,0.06)';
+                    
+                    if (stance === 'Allied') {
+                        bg = 'rgba(34,197,94,0.12)';
+                        color = '#22c55e';
+                        border = 'rgba(34,197,94,0.3)';
+                    } else if (stance === 'Hostile') {
+                        bg = 'rgba(239,68,68,0.12)';
+                        color = '#ef4444';
+                        border = 'rgba(239,68,68,0.3)';
+                    }
+                    
+                    html += `<td style="background:${bg};color:${color};border:1px solid ${border};font-size:0.58rem;font-weight:800;text-transform:uppercase;" title="${getColName(attacker.colonyId)} is ${stance} towards ${getColName(victim.colonyId)}">${stance.substring(0,3)}</td>`;
+                }
+            });
+            html += `</tr>`;
+        });
+        html += `</table></div>`;
+
+
+
+        // ── K/D Performance ──
+        const sortedKD = [...colonies].sort((a,b)=>(b.kdRatio||0)-(a.kdRatio||0));
+        html += `<div class="intel-widget">
+          <div class="intel-section-title">📊 K/D Performance</div>`;
+
+        sortedKD.forEach((c, idx) => {
+            const hex = '#' + c.exploreColor.getHexString();
+            const kd = c.kdRatio || 0;
+            const killsRow = window.statsEngine.killMatrix[c.colonyId]||{};
+            const kills = Object.values(killsRow).reduce((a,b)=>a+b,0);
+            const deaths = window.statsEngine.deathCounts[c.colonyId]||0;
+            const total = kills + deaths;
+            const killPct = total>0 ? (kills/total)*100 : 50;
+            const deathPct = total>0 ? (deaths/total)*100 : 50;
+            const rankLabel = ['🥇','🥈','🥉',''][Math.min(idx,3)];
+
+            let favTargetId=-1, maxKT=0, nemesisId=-1, maxDF=0;
+            colonies.forEach(other => {
+                if (other.colonyId !== c.colonyId) {
+                    const k = killsRow[other.colonyId]||0;
+                    if (k>maxKT){maxKT=k;favTargetId=other.colonyId;}
+                    const otherRow = window.statsEngine.killMatrix[other.colonyId]||{};
+                    const d = otherRow[c.colonyId]||0;
+                    if (d>maxDF){maxDF=d;nemesisId=other.colonyId;}
+                }
+            });
+
+            html += `<div class="kd-colony-row">
+              <div class="kd-header-row">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-size:1rem;">${rankLabel}</span>
+                  ${colPill(c.colonyId, hex)}
+                </div>
+                <span style="font-size:0.68rem;font-weight:700;">
+                  <span style="color:${hex};">${kills} kills</span> <span style="color:var(--text-secondary);">/</span> <span style="color:#ef4444;">${deaths} deaths</span>
+                </span>
+              </div>
+              <div class="kd-dual-bar">
+                <div class="kd-kills-fill" style="width:${killPct}%;background:${hex};"></div>
+                <div class="kd-deaths-fill" style="width:${deathPct}%;"></div>
+              </div>
+              <div class="kd-meta">
+                <span>Kill share: <strong>${killPct.toFixed(0)}%</strong></span>
+                <span>K/D: <strong style="color:${kd>=1?'#22c55e':'#ef4444'};">${kd.toFixed(2)}</strong></span>
+              </div>`;
+
+            if (maxKT>0 || maxDF>0) {
+                html += `<div class="kd-insight-row">`;
+                if (maxKT>0) {
+                    const tCol = colonies.find(col=>col.colonyId===favTargetId);
+                    const tHex = tCol ? '#'+tCol.exploreColor.getHexString() : '#18181b';
+                    html += `<div class="kd-insight-item">
+                      <span style="color:var(--text-secondary);display:flex;align-items:center;gap:5px;">🎯 Hunts ${colPillLight(favTargetId,tHex)}</span>
+                      <span style="font-weight:900;color:#18181b;">${maxKT}×</span>
+                    </div>`;
+                }
+                if (maxDF>0) {
+                    const nCol = colonies.find(col=>col.colonyId===nemesisId);
+                    const nHex = nCol ? '#'+nCol.exploreColor.getHexString() : '#ef4444';
+                    html += `<div class="kd-insight-item">
+                      <span style="color:var(--text-secondary);display:flex;align-items:center;gap:5px;">💀 Hunted by ${colPillLight(nemesisId,nHex)}</span>
+                      <span style="font-weight:900;color:#ef4444;">${maxDF}×</span>
+                    </div>`;
+                }
+                html += `</div>`;
+            } else {
+                html += `<div style="font-size:0.6rem;color:var(--text-secondary);margin-top:4px;font-style:italic;">No engagements yet.</div>`;
+            }
+            html += `</div>`;
+        });
+        html += `</div>`;
+
+        container.innerHTML = html;
+    }
+
+    // ── PREDICTIONS TAB ──────────────────────────────────────────
+    if (activeIntelTab === 'predictions') {
+        const container = document.getElementById('tab-predictions');
+        if (!container) return;
+
+        const iconBorderMap={'💀':'#ef4444','⚠️':'#f97316','⚔️':'#8b5cf6','🏆':'#22c55e','📈':'#3b82f6','🌿':'#10b981','🛡️':'#6366f1','🚨':'#ef4444','⏳':'#94a3b8'};
+        const list = window.statsEngine.predictions||[];
+
+        let html = '';
+        if (list.length === 0) {
+            html = `<div class="intel-widget" style="text-align:center;padding:24px 12px;">
+              <div style="font-size:2rem;margin-bottom:8px;">🔭</div>
+              <div style="font-size:0.72rem;color:var(--text-secondary);">Gathering statistics…<br>Check back after a few seconds.</div>
+            </div>`;
+        } else {
+            list.forEach(p => {
+                const bc = iconBorderMap[p.icon]||'#94a3b8';
+                const bg = bc+'12';
+                html += `<div class="pred-card" style="border-left-color:${bc};background:${bg};">
+                  <div class="pred-icon">${p.icon}</div>
+                  <div class="pred-body">
+                    <div class="pred-title">${p.title}</div>
+                    <div class="pred-desc">${p.desc}</div>
+                  </div>
+                </div>`;
+            });
+        }
+        container.innerHTML = html;
+    }
+
+    // Trigger lazy tint loading for any headshots inside the intel panel
+    const intelPanel = document.getElementById('intel-panel');
+    if (intelPanel) {
+        intelPanel.querySelectorAll('.tint-headshot-lazy').forEach(img => {
+            const personality = img.getAttribute('data-personality');
+            const color = img.getAttribute('data-color');
+            getTintedHeadshot(personality, color, (dataUrl) => {
+                img.src = dataUrl;
+            });
+        });
+    }
+}
+
+// ── Mini Map Renderer (drawn on canvas) ─────────────────────
+function renderMiniMap() {
+    const canvas = document.getElementById('mini-map-canvas');
+    if (!canvas || !colonies || colonies.length === 0) return;
+
+    const W = canvas.width = canvas.offsetWidth || 258;
+    const H = canvas.height = 120;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,W,H);
+
+    // Background
+    ctx.fillStyle = 'rgba(240,240,242,0.7)';
+    ctx.fillRect(0,0,W,H);
+
+    // World extents (nests + ants live within ~[-60,60])
+    const WS = WORLD_SIZE * 0.6; // visible range = 72 units
+    const toX = (wx) => ((wx + WS) / (WS*2)) * W;
+    const toY = (wz) => ((wz + WS) / (WS*2)) * H;
+
+    // Draw ants as tiny dots
+    colonies.forEach(c => {
+        const hex = '#' + c.exploreColor.getHexString();
+        ctx.fillStyle = hex;
+        c.ants.forEach(ant => {
+            const px = toX(ant.x);
+            const py = toY(ant.z);
+            if (px>=0&&px<=W&&py>=0&&py<=H) {
+                ctx.fillRect(px-0.7, py-0.7, 1.5, 1.5);
+            }
+        });
+    });
+
+    // Draw nests as larger circles with colony ring
+    colonies.forEach(c => {
+        const hex = '#' + c.exploreColor.getHexString();
+        const nx = toX(c.nestX), ny = toY(c.nestZ);
+
+        // Outer ring
+        ctx.beginPath();
+        ctx.arc(nx, ny, 5, 0, Math.PI*2);
+        ctx.strokeStyle = hex;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Inner fill
+        ctx.beginPath();
+        ctx.arc(nx, ny, 3, 0, Math.PI*2);
+        ctx.fillStyle = hex;
+        ctx.fill();
+
+        // Label
+        ctx.font = 'bold 7px Space Grotesk, sans-serif';
+        ctx.fillStyle = '#18181b';
+        ctx.textAlign = 'center';
+        const name = COLONY_NAMES[c.colonyId]||`C${c.colonyId}`;
+        ctx.fillText(name.substring(0,3), nx, ny-7);
+    });
+
+    // Food sources (small red squares)
+    sharedFoods.forEach(f => {
+        if (!f || f.amount <= 0) return;
+        const px=toX(f.x), py=toY(f.z);
+        if (px>=0&&px<=W&&py>=0&&py<=H) {
+            ctx.fillStyle = 'rgba(239,68,68,0.6)';
+            ctx.fillRect(px-1.5,py-1.5,3,3);
+        }
+    });
+}
+
+
+
+
 function applyCameraPreset(preset) {
     cameraPresetMode = preset;
     
@@ -1802,6 +2905,134 @@ function applyCameraPreset(preset) {
         controls.autoRotate = false;
         // Seed starting look target to match current controls to prevent coordinate snap jumps
         cameraLookTarget.copy(controls.target);
+    }
+}
+
+
+
+function showNestStatsCard(index, clientX, clientY) {
+    selectedNestIndex = index;
+    const card = document.getElementById('nest-stats-card');
+    if (card && clientX !== undefined && clientY !== undefined) {
+        let x = clientX + 15;
+        let y = clientY + 15;
+        if (x + 270 > window.innerWidth) x = clientX - 280;
+        if (y + 250 > window.innerHeight) y = clientY - 260;
+        card.style.left = `${x}px`;
+        card.style.top = `${y}px`;
+        card.classList.remove('hidden');
+    } else if (card) {
+        card.classList.remove('hidden');
+    }
+    updateNestStatsCard();
+}
+
+function updateNestStatsCard() {
+    if (selectedNestIndex === -1) return;
+    const col = colonies[selectedNestIndex];
+    if (!col) return;
+
+    const getFriendlyColorName = (colId) => {
+        if (COLONY_CONFIGS[colId]) {
+            const match = COLONY_CONFIGS[colId].name.match(/\(([^)]+)\)/);
+            if (match) return match[1];
+            return COLONY_CONFIGS[colId].name;
+        }
+        return `Colony ${colId}`;
+    };
+
+    const colorDot = document.getElementById('nest-card-color-dot');
+    const title = document.getElementById('nest-card-title');
+    const risk = document.getElementById('nest-card-risk');
+    const pop = document.getElementById('nest-card-pop');
+    const food = document.getElementById('nest-card-food');
+    const kd = document.getElementById('nest-card-kd');
+    const barsContainer = document.getElementById('nest-card-bars-container');
+    const hpBarContainer = document.getElementById('nest-card-hp-bar-container');
+
+    const hex = '#' + col.exploreColor.getHexString();
+
+    if (colorDot) colorDot.style.color = hex;
+    if (title) title.innerText = getFriendlyColorName(col.colonyId) + ' Nest';
+    
+    // Risk status
+    const riskVal = col.extinctionRisk || 0;
+    if (risk) {
+        risk.className = 'risk-badge';
+        if (riskVal >= 70) {
+            risk.classList.add('risk-high');
+            risk.innerText = 'Critical!';
+        } else if (riskVal >= 40) {
+            risk.classList.add('risk-medium');
+            risk.innerText = 'Vulnerable';
+        } else {
+            risk.classList.add('risk-low');
+            risk.innerText = 'Stable';
+        }
+    }
+
+    // Slope/trend details
+    const slope = col.populationSlope || 0;
+    const trendIcon = slope > 0.2 ? '↑' : slope < -0.2 ? '↓' : '→';
+    const trendColor = slope > 0.2 ? '#22c55e' : slope < -0.2 ? '#ef4444' : '#71717a';
+    if (pop) {
+        pop.innerHTML = `${col.ants.length} <span style="font-size:0.6rem;color:${trendColor};font-weight:700;margin-left:4px;">${trendIcon} ${slope > 0 ? '+' : ''}${slope.toFixed(1)}/s</span>`;
+    }
+
+    // Food Dominance
+    const totalFood = colonies.reduce((s, c) => s + c.foodCollected, 0);
+    const foodPct = totalFood > 0 ? Math.round((col.foodCollected / totalFood) * 100) : Math.round(100 / colonies.length);
+    if (food) {
+        food.innerText = `${col.foodCollected} (${foodPct}%)`;
+    }
+
+    // K/D Ratio
+    const killsRow = window.statsEngine.killMatrix[col.colonyId] || {};
+    const kills = Object.values(killsRow).reduce((a, b) => a + b, 0);
+    const deaths = window.statsEngine.deathCounts[col.colonyId] || 0;
+    const ratio = col.kdRatio || 0;
+    if (kd) {
+        kd.innerText = `${kills} K / ${deaths} D (${ratio.toFixed(1)})`;
+    }
+
+    // Render Bars
+    const aggPct = Math.round((col.aggressionIndex || 0) * 100);
+    const hpBuckets = col.hpBuckets || [0, 0, 0, 10];
+    const tot = hpBuckets.reduce((a, b) => a + b, 0) || 1;
+    const healthScore = Math.round(((hpBuckets[2] + hpBuckets[3]) / tot) * 100);
+    const threat = col.nearestThreatDist || 9999;
+    const threatPct = threat < 9999 ? Math.round(Math.max(0, (1 - threat / 60)) * 100) : 0;
+
+    const createMiniBarLocal = (pct, color, label) => {
+        const p = Math.max(0, Math.min(100, pct));
+        return `<div class="intel-mini-bar-row">
+          <span class="intel-mini-bar-label" style="font-size:0.6rem; min-width:54px;">${label}</span>
+          <div class="intel-mini-bar-track" style="height:4px;"><div class="intel-mini-bar-fill" style="width:${p}%;background:${color};"></div></div>
+          <span class="intel-mini-bar-pct" style="font-size:0.6rem; min-width:24px;">${Math.round(p)}%</span>
+        </div>`;
+    };
+
+    if (barsContainer) {
+        barsContainer.innerHTML = 
+            createMiniBarLocal(aggPct, '#ef4444', '⚔ Combat') +
+            createMiniBarLocal(healthScore, '#22c55e', '❤ Health') +
+            createMiniBarLocal(threatPct, '#f97316', '☢ Threat');
+    }
+
+    if (hpBarContainer) {
+        const p = hpBuckets.map(b => (b / tot * 100).toFixed(1));
+        hpBarContainer.innerHTML = `<div class="hp-dist-bar" style="height:7px;border-radius:4px;display:flex;overflow:hidden;background:rgba(24,24,27,0.05);cursor:help;" title="HP Profile: Hover over individual labels below for detailed health ranges.">
+          <div class="hp-dist-seg hp-seg-low" style="width:${p[0]}%;background:#ef4444;height:100%;"></div>
+          <div class="hp-dist-seg hp-seg-med-low" style="width:${p[1]}%;background:#f97316;height:100%;"></div>
+          <div class="hp-dist-seg hp-seg-med-high" style="width:${p[2]}%;background:#eab308;height:100%;"></div>
+          <div class="hp-dist-seg hp-seg-high" style="width:${p[3]}%;background:#22c55e;height:100%;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.58rem;font-weight:700;margin-top:5px;flex-wrap:wrap;gap:2px;">
+          <span style="color:#ef4444;display:inline-flex;align-items:center;cursor:help;" title="Critical: 0% - 25% HP (Near death/sustained fatal damage)"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#ef4444;margin-right:3px;"></span>Crit: ${Math.round(p[0])}%</span>
+          <span style="color:#f97316;display:inline-flex;align-items:center;cursor:help;" title="Low: 26% - 50% HP (Taken major battle damage)"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#f97316;margin-right:3px;"></span>Low: ${Math.round(p[1])}%</span>
+          <span style="color:#eab308;display:inline-flex;align-items:center;cursor:help;" title="Mid: 51% - 75% HP (Taken minor combat damage)"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#eab308;margin-right:3px;"></span>Mid: ${Math.round(p[2])}%</span>
+          <span style="color:#22c55e;display:inline-flex;align-items:center;cursor:help;" title="Full: 76% - 100% HP (Uninjured foragers or fresh spawns)"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#22c55e;margin-right:3px;"></span>Full: ${Math.round(p[3])}%</span>
+        </div>`;
     }
 }
 

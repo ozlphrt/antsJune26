@@ -18,6 +18,13 @@
 
     <!-- Three.js Canvas Container -->
     <div id="canvas-container"></div>
+
+    <div id="colony-setup-panel" class="colony-setup-panel panel flex-col">
+        <div id="setup-colonies-list" style="display:flex; flex-direction:column; gap:6px; max-height: 260px; overflow-y:auto; scrollbar-width:none; padding-right:2px;">
+            <!-- Populated dynamically in main.js -->
+        </div>
+        <button id="btn-apply-setup" class="btn-primary" style="font-size: 0.65rem; padding: 5px; font-weight: 700; width: 100%; border-radius: 6px; margin-top: 4px;">Apply Strategy & Reset</button>
+    </div>
     
     <!-- Camera Preset Panel & Toggle Button -->
     <button id="btn-camera-preset" class="camera-preset-btn">📹 Cam</button>
@@ -54,14 +61,14 @@
 
     <button id="btn-combat-pill" class="pill-btn combat-pill-pos">
         <span class="pill-icon">⚔️</span>
-        <span id="pill-combat-mode" class="pill-value" style="font-size: 0.65rem;">Conversion</span>
+        <span id="pill-combat-mode" class="pill-value" style="font-size: 0.65rem;">Removal</span>
     </button>
     <div id="panel-combat-edit" class="edit-popup-panel panel hidden" style="bottom: 220px; width: 180px;">
         <div class="combat-mode-options flex-col" style="display: flex; flex-direction: column; gap: 4px;">
             <label style="font-size: 0.72rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Combat Scenario</label>
             <button class="combat-option-btn" data-mode="respawn">🔄 Respawn</button>
-            <button class="combat-option-btn" data-mode="removal">💀 Removal</button>
-            <button class="combat-option-btn active" data-mode="conversion">🧬 Conversion</button>
+            <button class="combat-option-btn active" data-mode="removal">💀 Removal</button>
+            <button class="combat-option-btn" data-mode="conversion">🧬 Conversion</button>
         </div>
     </div>
 
@@ -77,6 +84,90 @@
 
     <!-- Settings Icon Button to toggle Dashboard panel visibility -->
     <button id="btn-settings-toggle" class="settings-toggle-btn">⚙️ Set</button>
+
+    <!-- Invisible hover trigger area for unpinned stats panel on the left edge -->
+    <div id="intel-hover-trigger" class="intel-hover-trigger"></div>
+
+
+
+    <!-- Floating Colony Nest Stats Card -->
+    <div id="nest-stats-card" class="nest-stats-card hidden">
+        <button id="btn-nest-card-close" class="nest-card-close-btn">&times;</button>
+        <div id="nest-card-header" class="nest-card-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid rgba(0,0,0,0.06); padding-bottom:6px;">
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span id="nest-card-color-dot" class="nest-card-color-dot">●</span>
+                <span id="nest-card-title" class="nest-card-title" style="font-weight:800; font-size:0.8rem;">Green Nest</span>
+            </div>
+            <span id="nest-card-risk" class="risk-badge risk-low">Stable</span>
+        </div>
+        <div class="nest-card-body">
+            <div class="nest-card-row">
+                <span class="nest-card-label">Population:</span>
+                <span id="nest-card-pop" class="nest-card-value">120</span>
+            </div>
+            <div class="nest-card-row">
+                <span class="nest-card-label">Food Dominance:</span>
+                <span id="nest-card-food" class="nest-card-value">45</span>
+            </div>
+            <div class="nest-card-row">
+                <span class="nest-card-label">Kills / Deaths:</span>
+                <span id="nest-card-kd" class="nest-card-value">12 / 8</span>
+            </div>
+            
+            <!-- Mini Bars (Combat, Health, Threat) -->
+            <div id="nest-card-bars-container" style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
+                <!-- Generated dynamically in main.js -->
+            </div>
+            
+            <!-- HP Distribution Segmented Bar -->
+            <div style="margin-top:8px;">
+                <div style="font-size:0.58rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px;cursor:help;" title="HP Distribution: Shows the health profile of the colony's ants. High Crit/Low counts warn of upcoming population drop. Hover over legend items below for details.">HP Profile ⓘ</div>
+                <div id="nest-card-hp-bar-container">
+                    <!-- Generated dynamically in main.js -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Collapsible Stats Panel -->
+    <div id="intel-panel" class="intel-panel panel flex-col pinned">
+        <header class="intel-header" style="position: relative;">
+            <h2>Colony Stats</h2>
+            <p class="subtitle">Realtime Behavioral Diagnostics</p>
+            <button id="btn-intel-pin" class="intel-pin-btn" title="Pin/Unpin panel">📌</button>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="intel-tabs">
+            <button class="intel-tab-btn active" data-tab="overview">Overview</button>
+            <button class="intel-tab-btn" data-tab="colonies">Colonies</button>
+            <button class="intel-tab-btn" data-tab="combat">Combat</button>
+            <button class="intel-tab-btn" data-tab="predictions">Predictions</button>
+        </nav>
+
+        <!-- Content Container -->
+        <div class="intel-content-area">
+            <!-- Overview Tab -->
+            <div id="tab-overview" class="intel-tab-content">
+                <!-- Populated dynamically via main.js -->
+            </div>
+
+            <!-- Colonies Tab -->
+            <div id="tab-colonies" class="intel-tab-content hidden">
+                <!-- Populated dynamically via main.js -->
+            </div>
+
+            <!-- Combat Tab -->
+            <div id="tab-combat" class="intel-tab-content hidden">
+                <!-- Populated dynamically via main.js -->
+            </div>
+
+            <!-- Predictions Tab -->
+            <div id="tab-predictions" class="intel-tab-content hidden">
+                <!-- Populated dynamically via main.js -->
+            </div>
+        </div>
+    </div>
 
     <!-- Top Center Scoreboard -->
     <div class="top-scoreboard panel flex-col">

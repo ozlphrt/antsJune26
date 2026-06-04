@@ -4,6 +4,15 @@
 
 import { getTerrainHeight } from './terrain.js';
 
+// Pre-allocated spatial grid cache to eliminate GC allocations and optimize collision performance
+const gridCellSize = 3.5;
+const gridDim = 40; // Covering [-70, 70]
+const gridMin = -70;
+const totalGridCells = gridDim * gridDim;
+const collisionGrid = Array.from({ length: totalGridCells }, () => []);
+const occupiedCells = [];
+
+
 class Ant {
     constructor(id, nestX, nestZ, colonyId) {
         this.id = id;
@@ -49,14 +58,13 @@ class Ant {
         this.pheromoneStrength = Math.max(0.05, this.pheromoneStrength * 0.995);
     }
     
-    // Ant sensory decision making
     steer(pheromones, nestX, nestZ, foods, sensorAngleRad, sensorDist, speed, allColonies = null, ownColonyId = 0) {
         // 0. Combat steering priority
         if (this.combatTarget && this.combatTarget.hp > 0) {
             const dx = this.combatTarget.x - this.x;
             const dz = this.combatTarget.z - this.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist < 6.0) {
+            const distSq = dx * dx + dz * dz;
+            if (distSq < 36.0) { // 6.0 * 6.0
                 const targetAngle = Math.atan2(this.combatTarget.x - this.x, this.combatTarget.z - this.z);
                 this.angle = this.blendAngles(this.angle, targetAngle, 0.25);
                 return;
@@ -72,7 +80,7 @@ class Ant {
             if (freeFoodAvailable) {
                 // Look for nearby food piles to steer directly toward them (scaled for medium food size)
                 let closestFood = null;
-                let minDist = 16.0; // Food detection radius
+                let minDistSq = 256.0; // 16.0 * 16.0 Food detection radius
                 
                 for (let i = 0; i < foods.length; i++) {
                     const food = foods[i];
@@ -80,9 +88,9 @@ class Ant {
                     
                     const dx = food.x - this.x;
                     const dz = food.z - this.z;
-                    const d = Math.sqrt(dx*dx + dz*dz);
-                    if (d < minDist) {
-                        minDist = d;
+                    const d2 = dx*dx + dz*dz;
+                    if (d2 < minDistSq) {
+                        minDistSq = d2;
                         closestFood = food;
                     }
                 }
@@ -95,7 +103,7 @@ class Ant {
             } else if (allColonies) {
                 // Free food depleted: steer toward the closest active opponent nest that has collected food
                 let closestOpponentNest = null;
-                let minDist = 99999.0; // Large range to track nests across map
+                let minDistSq = 9999999.0; // Large range to track nests across map
                 
                 for (let i = 0; i < allColonies.length; i++) {
                     const col = allColonies[i];
@@ -103,9 +111,9 @@ class Ant {
                     
                     const dx = col.nestX - this.x;
                     const dz = col.nestZ - this.z;
-                    const d = Math.sqrt(dx*dx + dz*dz);
-                    if (d < minDist) {
-                        minDist = d;
+                    const d2 = dx*dx + dz*dz;
+                    if (d2 < minDistSq) {
+                        minDistSq = d2;
                         closestOpponentNest = col;
                     }
                 }
@@ -120,9 +128,9 @@ class Ant {
             // State: return. Steer directly to Nest if close enough
             const dx = nestX - this.x;
             const dz = nestZ - this.z;
-            const distToNest = Math.sqrt(dx*dx + dz*dz);
+            const distToNestSq = dx*dx + dz*dz;
             
-            if (distToNest < 20.0) {
+            if (distToNestSq < 400.0) { // 20.0 * 20.0
                 const targetAngle = Math.atan2(nestX - this.x, nestZ - this.z);
                 this.angle = this.blendAngles(this.angle, targetAngle, 0.25);
                 return;
@@ -179,8 +187,8 @@ class Ant {
         if (this.combatTarget && this.combatTarget.hp > 0) {
             const dx = this.combatTarget.x - this.x;
             const dz = this.combatTarget.z - this.z;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist < 1.2) {
+            const distSq = dx * dx + dz * dz;
+            if (distSq < 1.44) { // 1.2 * 1.2
                 this.lastX = this.x;
                 this.lastZ = this.z;
                 return;
@@ -290,6 +298,8 @@ export class ColonyManager {
         this.foods = sharedFoods || [];
         this.obstacles = sharedObstacles || [];
         this.foodCollected = 0;
+        this.personality = 'dove'; // Game theory personality: 'hawk', 'dove', 'grudger', 'bully'
+        this.stances = {}; // colonyId -> 'Allied' | 'Neutral' | 'Hostile'
         this.foodPileData = [];
         this.antsDefeated = 0;
         
@@ -318,7 +328,14 @@ export class ColonyManager {
     
     // Create instanced meshes for fast rendering
     createAntVisuals(count) {
+        // Use a fixed pool size to prevent recreating the Three.js InstancedMesh which causes flickering
+        const poolSize = Math.max(count, 2000);
+        
         if (this.instancedMesh) {
+            if (this.instancedMesh.count === poolSize) {
+                // Already have the correct size pool, no need to recreate
+                return;
+            }
             this.scene.remove(this.instancedMesh);
         }
         if (this.foodCarriedMesh) {
@@ -347,16 +364,25 @@ export class ColonyManager {
             flatShading: true
         });
         
-        this.instancedMesh = new THREE.InstancedMesh(geometry, material, count);
+        this.instancedMesh = new THREE.InstancedMesh(geometry, material, poolSize);
         this.instancedMesh.castShadow = true;
         this.instancedMesh.receiveShadow = false;
         this.scene.add(this.instancedMesh);
+        
+        // Hide all instances initially
+        const hiddenDummy = new THREE.Object3D();
+        hiddenDummy.position.set(9999, 9999, 9999);
+        hiddenDummy.updateMatrix();
+        for (let i = 0; i < poolSize; i++) {
+            this.instancedMesh.setMatrixAt(i, hiddenDummy.matrix);
+        }
+        this.instancedMesh.instanceMatrix.needsUpdate = true;
         
         // Immediately color and position existing ants on the new mesh to prevent rendering as default white
         if (this.ants && this.ants.length > 0) {
             const dummy = new THREE.Object3D();
             const colorForaging = this.exploreColor;
-            for (let i = 0; i < Math.min(this.ants.length, count); i++) {
+            for (let i = 0; i < Math.min(this.ants.length, poolSize); i++) {
                 const ant = this.ants[i];
                 dummy.position.set(ant.x, ant.y + 0.3, ant.z);
                 
@@ -390,8 +416,13 @@ export class ColonyManager {
             metalness: 0.1,
             flatShading: true
         });
-        this.foodCarriedMesh = new THREE.InstancedMesh(foodCarrierGeom, foodCarrierMat, count);
+        this.foodCarriedMesh = new THREE.InstancedMesh(foodCarrierGeom, foodCarrierMat, poolSize);
         this.foodCarriedMesh.castShadow = true;
+        // Position all food meshes at hidden location initially
+        for (let i = 0; i < poolSize; i++) {
+            this.foodCarriedMesh.setMatrixAt(i, hiddenDummy.matrix);
+        }
+        this.foodCarriedMesh.instanceMatrix.needsUpdate = true;
         this.scene.add(this.foodCarriedMesh);
     }
 
@@ -747,11 +778,16 @@ export class ColonyManager {
                         // Scan for closest enemy within 5.0 units
                         let closestEnemy = null;
                         let closestEnemyDist = 5.0;
+                        let enemyColony = null;
                         
                         for (let c = 0; c < allColonies.length; c++) {
                             const col = allColonies[c];
                             if (col.colonyId === this.colonyId) continue;
                             
+                            // Check diplomatic stance
+                            const stance = this.stances[col.colonyId] || 'Neutral';
+                            if (stance === 'Allied') continue; // Allied colonies never fight
+
                             for (let a = 0; a < col.ants.length; a++) {
                                 const enemy = col.ants[a];
                                 if (enemy.hp <= 0) continue;
@@ -762,14 +798,55 @@ export class ColonyManager {
                                 if (d < closestEnemyDist) {
                                     closestEnemyDist = d;
                                     closestEnemy = enemy;
+                                    enemyColony = col;
                                 }
                             }
                         }
                         
-                        if (closestEnemy) {
-                            ant.combatTarget = closestEnemy;
-                            if (!closestEnemy.combatTarget) {
-                                closestEnemy.combatTarget = ant;
+                        if (closestEnemy && enemyColony) {
+                            const stance = this.stances[enemyColony.colonyId] || 'Neutral';
+                            
+                            if (stance === 'Hostile') {
+                                // Fight on sight
+                                ant.combatTarget = closestEnemy;
+                                if (!closestEnemy.combatTarget) {
+                                    closestEnemy.combatTarget = ant;
+                                }
+                            } else if (stance === 'Neutral') {
+                                // Decide based on game theory / personality
+                                const p = this.personality;
+                                
+                                if (p === 'hawk') {
+                                    // Hawks always attack (defect)
+                                    ant.combatTarget = closestEnemy;
+                                    if (!closestEnemy.combatTarget) {
+                                        closestEnemy.combatTarget = ant;
+                                    }
+                                } else if (p === 'bully') {
+                                    // Bully attacks only if we have a population advantage > 20%
+                                    const ourPop = this.ants.filter(a => a.hp > 0).length;
+                                    const theirPop = enemyColony.ants.filter(a => a.hp > 0).length;
+                                    if (ourPop > theirPop * 1.2) {
+                                        ant.combatTarget = closestEnemy;
+                                        if (!closestEnemy.combatTarget) {
+                                            closestEnemy.combatTarget = ant;
+                                        }
+                                    } else {
+                                        // Flee if they are aggressive or targeting us
+                                        if (closestEnemy.combatTarget === ant || enemyColony.personality === 'hawk') {
+                                            ant.angle = Math.atan2(ant.x - closestEnemy.x, ant.z - closestEnemy.z) + (Math.random() - 0.5) * 0.3;
+                                        }
+                                    }
+                                } else {
+                                    // Dove or Grudger (starts as Dove)
+                                    if (closestEnemy.combatTarget === ant) {
+                                        // Defend if targeted
+                                        ant.combatTarget = closestEnemy;
+                                    } else if (enemyColony.personality === 'hawk' || (enemyColony.personality === 'bully' && enemyColony.ants.filter(a => a.hp > 0).length > this.ants.filter(a => a.hp > 0).length * 1.2)) {
+                                        // Flee if the other is a hawk/bully
+                                        ant.angle = Math.atan2(ant.x - closestEnemy.x, ant.z - closestEnemy.z) + (Math.random() - 0.5) * 0.3;
+                                    }
+                                }
                             }
                         }
                     }
@@ -812,10 +889,13 @@ export class ColonyManager {
                         
                         // Handle opponent death
                         if (ant.combatTarget.hp <= 0) {
-                            // Increment defeated (death) count for opponent colony
+                            // Increment defeated (death) count for opponent colony and record stats
                             const targetColony = allColonies.find(c => c.colonyId === ant.combatTarget.colonyId);
                             if (targetColony) {
                                 targetColony.antsDefeated++;
+                                if (window.statsEngine) {
+                                    window.statsEngine.recordKill(this.colonyId, targetColony.colonyId);
+                                }
                             }
                             
                             // Trigger bionic blood splash particles and floating health bag
@@ -1023,74 +1103,65 @@ export class ColonyManager {
         }
         
         // Ant-to-ant physical collision avoidance (Global across all colonies to make them act as solid objects)
-        if (this.colonyId === 0 && allColonies) {
-            const gridCellSize = 3.5;
-            const grid = {};
-            
-            const getGridKey = (x, z) => {
-                const cx = Math.floor(x / gridCellSize);
-                const cz = Math.floor(z / gridCellSize);
-                return `${cx},${cz}`;
-            };
-            
-            // Gather and bin ALL active ants from all colonies
-            for (let c = 0; c < allColonies.length; c++) {
-                const col = allColonies[c];
-                for (let a = 0; a < col.ants.length; a++) {
-                    const ant = col.ants[a];
-                    if (ant.hp > 0) {
-                        const key = getGridKey(ant.x, ant.z);
-                        if (!grid[key]) grid[key] = [];
-                        grid[key].push(ant);
+        if (allColonies) {
+            if (this.colonyId === 0) {
+                // Clear pre-allocated spatial grid
+                for (let idx = 0; idx < totalGridCells; idx++) {
+                    collisionGrid[idx].length = 0;
+                }
+                occupiedCells.length = 0;
+
+                // Gather and bin ALL active ants from all colonies
+                for (let c = 0; c < allColonies.length; c++) {
+                    const col = allColonies[c];
+                    for (let a = 0; a < col.ants.length; a++) {
+                        const ant = col.ants[a];
+                        if (ant.hp > 0) {
+                            const cx = Math.floor((ant.x - gridMin) / gridCellSize);
+                            const cz = Math.floor((ant.z - gridMin) / gridCellSize);
+                            if (cx >= 0 && cx < gridDim && cz >= 0 && cz < gridDim) {
+                                const idx = cz * gridDim + cx;
+                                if (collisionGrid[idx].length === 0) {
+                                    occupiedCells.push(idx);
+                                }
+                                collisionGrid[idx].push(ant);
+                            }
+                        }
                     }
                 }
-            }
-            
-            const minDist = 0.55; // Body diameter boundary (solid contact size)
-            const minDistSq = minDist * minDist;
-            
-            for (const key in grid) {
-                const cellAnts = grid[key];
-                const [cx, cz] = key.split(',').map(Number);
-                
-                const adjacentKeys = [
-                    key,
-                    `${cx + 1},${cz}`,
-                    `${cx - 1},${cz + 1}`,
-                    `${cx},${cz + 1}`,
-                    `${cx + 1},${cz + 1}`
-                ];
-                
-                for (let k = 0; k < adjacentKeys.length; k++) {
-                    const otherKey = adjacentKeys[k];
-                    const otherAnts = grid[otherKey];
-                    if (!otherAnts) continue;
-                    
+
+                const minDist = 0.55; // Body diameter boundary (solid contact size)
+                const minDistSq = minDist * minDist;
+
+                for (let o = 0; o < occupiedCells.length; o++) {
+                    const cellIdx = occupiedCells[o];
+                    const cellAnts = collisionGrid[cellIdx];
+                    const cx = cellIdx % gridDim;
+                    const cz = Math.floor(cellIdx / gridDim);
+
+                    // Compare ants within the same cell
                     for (let i = 0; i < cellAnts.length; i++) {
                         const a = cellAnts[i];
-                        const startIdx = (key === otherKey) ? i + 1 : 0;
-                        
-                        for (let j = startIdx; j < otherAnts.length; j++) {
-                            const b = otherAnts[j];
+                        for (let j = i + 1; j < cellAnts.length; j++) {
+                            const b = cellAnts[j];
                             const dx = b.x - a.x;
                             const dz = b.z - a.z;
                             const distSq = dx * dx + dz * dz;
-                            
+
                             if (distSq < minDistSq) {
                                 const dist = Math.sqrt(distSq);
-                                // Absolute solid push-out (0.5 weight for each ant)
                                 const overlap = (minDist - dist) * 0.5;
                                 const pushX = (dist > 0.001) ? (dx / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
                                 const pushZ = (dist > 0.001) ? (dz / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
-                                
+
                                 a.x -= pushX;
                                 a.z -= pushZ;
                                 b.x += pushX;
                                 b.z += pushZ;
-                                
+
                                 a.y = getTerrainHeight(a.x, a.z);
                                 b.y = getTerrainHeight(b.x, b.z);
-                                
+
                                 // Steer away from each other slightly to avoid lockups
                                 const escapeAngleA = Math.atan2(dx, dz) + Math.PI;
                                 const escapeAngleB = Math.atan2(dx, dz);
@@ -1099,54 +1170,50 @@ export class ColonyManager {
                             }
                         }
                     }
-                }
-            }
-        } else if (!allColonies) {
-            // Fallback for same-colony collision resolution if global list is not provided
-            const gridCellSize = 4.0;
-            const grid = {};
-            const getGridKey = (x, z) => {
-                const cx = Math.floor(x / gridCellSize);
-                const cz = Math.floor(z / gridCellSize);
-                return `${cx},${cz}`;
-            };
-            for (let i = 0; i < this.ants.length; i++) {
-                const ant = this.ants[i];
-                if (ant.hp > 0) {
-                    const key = getGridKey(ant.x, ant.z);
-                    if (!grid[key]) grid[key] = [];
-                    grid[key].push(ant);
-                }
-            }
-            const minDist = 0.65;
-            const minDistSq = minDist * minDist;
-            for (const key in grid) {
-                const cellAnts = grid[key];
-                const [cx, cz] = key.split(',').map(Number);
-                const adjacentKeys = [key, `${cx + 1},${cz}`, `${cx - 1},${cz + 1}`, `${cx},${cz + 1}`, `${cx + 1},${cz + 1}`];
-                for (let k = 0; k < adjacentKeys.length; k++) {
-                    const otherKey = adjacentKeys[k];
-                    const otherAnts = grid[otherKey];
-                    if (!otherAnts) continue;
-                    for (let i = 0; i < cellAnts.length; i++) {
-                        const a = cellAnts[i];
-                        const startIdx = (key === otherKey) ? i + 1 : 0;
-                        for (let j = startIdx; j < otherAnts.length; j++) {
-                            const b = otherAnts[j];
-                            const dx = b.x - a.x;
-                            const dz = b.z - a.z;
-                            const distSq = dx * dx + dz * dz;
-                            if (distSq < minDistSq) {
-                                const dist = Math.sqrt(distSq);
-                                const overlap = (minDist - dist) * 0.5;
-                                const pushX = (dist > 0.001) ? (dx / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
-                                const pushZ = (dist > 0.001) ? (dz / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
-                                a.x -= pushX;
-                                a.z -= pushZ;
-                                b.x += pushX;
-                                b.z += pushZ;
-                                a.y = getTerrainHeight(a.x, a.z);
-                                b.y = getTerrainHeight(b.x, b.z);
+
+                    // Compare with neighbor cells
+                    const neighbors = [
+                        cellIdx + 1,            // Right
+                        cellIdx + gridDim - 1,  // Top-Left
+                        cellIdx + gridDim,      // Top
+                        cellIdx + gridDim + 1   // Top-Right
+                    ];
+
+                    for (let n = 0; n < neighbors.length; n++) {
+                        const neighborIdx = neighbors[n];
+                        if (neighborIdx >= 0 && neighborIdx < totalGridCells) {
+                            const ncx = neighborIdx % gridDim;
+                            if (Math.abs(ncx - cx) <= 1) {
+                                const otherAnts = collisionGrid[neighborIdx];
+                                for (let i = 0; i < cellAnts.length; i++) {
+                                    const a = cellAnts[i];
+                                    for (let j = 0; j < otherAnts.length; j++) {
+                                        const b = otherAnts[j];
+                                        const dx = b.x - a.x;
+                                        const dz = b.z - a.z;
+                                        const distSq = dx * dx + dz * dz;
+
+                                        if (distSq < minDistSq) {
+                                            const dist = Math.sqrt(distSq);
+                                            const overlap = (minDist - dist) * 0.5;
+                                            const pushX = (dist > 0.001) ? (dx / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
+                                            const pushZ = (dist > 0.001) ? (dz / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
+
+                                            a.x -= pushX;
+                                            a.z -= pushZ;
+                                            b.x += pushX;
+                                            b.z += pushZ;
+
+                                            a.y = getTerrainHeight(a.x, a.z);
+                                            b.y = getTerrainHeight(b.x, b.z);
+
+                                            const escapeAngleA = Math.atan2(dx, dz) + Math.PI;
+                                            const escapeAngleB = Math.atan2(dx, dz);
+                                            a.angle = a.blendAngles(a.angle, escapeAngleA, 0.05);
+                                            b.angle = b.blendAngles(b.angle, escapeAngleB, 0.05);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1296,6 +1363,15 @@ export class ColonyManager {
             
             // Set Color based on signature colony color (unchanged when carrying food)
             this.instancedMesh.setColorAt(i, colorForaging);
+        }
+        
+        // Hide unused/surplus instances in the pool
+        const hiddenDummy = new THREE.Object3D();
+        hiddenDummy.position.set(9999, 9999, 9999);
+        hiddenDummy.updateMatrix();
+        for (let i = this.ants.length; i < this.instancedMesh.count; i++) {
+            this.instancedMesh.setMatrixAt(i, hiddenDummy.matrix);
+            this.foodCarriedMesh.setMatrixAt(i, hiddenDummy.matrix);
         }
         
         this.instancedMesh.instanceMatrix.needsUpdate = true;
