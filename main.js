@@ -1157,7 +1157,7 @@ function initCustomTooltip() {
 }
 
 function positionTooltip(e, tooltipEl) {
-    const margin = 12;
+    const margin = 20;
     let x = e.clientX + margin;
     let y = e.clientY + margin;
 
