@@ -1713,4 +1713,31 @@ button {
     box-shadow: 0 4px 12px rgba(24, 24, 27, 0.2);
 }
 
+/* Wizard Options Highlights */
+#btn-wizard-default {
+    background: #eab308 !important;
+    border-color: #eab308 !important;
+    color: #18181b !important;
+    box-shadow: 0 4px 14px rgba(234, 179, 8, 0.3) !important;
+    transition: all 0.2s ease !important;
+}
+#btn-wizard-default:hover {
+    background: #ca8a04 !important;
+    border-color: #ca8a04 !important;
+    box-shadow: 0 6px 20px rgba(234, 179, 8, 0.5) !important;
+    transform: translateY(-1px);
+}
+#btn-wizard-guide, #btn-wizard-surprise {
+    background: #27272a !important;
+    border-color: #27272a !important;
+    color: #ffffff !important;
+    transition: all 0.2s ease !important;
+}
+#btn-wizard-guide:hover, #btn-wizard-surprise:hover {
+    background: #3f3f46 !important;
+    border-color: #3f3f46 !important;
+    transform: translateY(-1px);
+}
+
+
 
