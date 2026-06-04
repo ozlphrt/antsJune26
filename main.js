@@ -2754,23 +2754,38 @@ function renderIntelDashboard() {
 
     // Sparkline SVG
     const sparklineHtml = (data, color, uid) => {
-        if (!data || data.length < 2) return `<div style="height:38px;background:rgba(0,0,0,0.03);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;color:#aaa;">no data yet</div>`;
+        if (!data || data.length < 2) return `<div style="height:38px;background:rgba(0,0,0,0.02);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:0.6rem;color:#71717a;font-family:inherit;">No history data</div>`;
         const W=258, H=38;
-        const maxV=Math.max(...data,1), minV=Math.min(...data,0);
-        const range=maxV-minV||1;
-        const xs=data.map((_,i)=>(i/(data.length-1))*W);
-        const ys=data.map(v=>H-3-((v-minV)/range)*(H-6));
-        const pts=xs.map((x,i)=>`${x},${ys[i]}`);
-        const areaD=`M${pts[0]} L${pts.join(' L')} L${W},${H} L0,${H} Z`;
-        const gid=`sg_${uid}`;
-        return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:38px;" preserveAspectRatio="none">
+        
+        // Calculate dynamic range with safety margins
+        const dataMin = Math.min(...data);
+        const dataMax = Math.max(...data);
+        const span = dataMax - dataMin;
+        
+        // Ensure a minimum span of 30 to prevent noise amplification
+        const targetSpan = Math.max(30, span * 1.5);
+        const mid = (dataMin + dataMax) / 2;
+        
+        const minV = Math.max(0, Math.floor(mid - targetSpan / 2));
+        let maxV = Math.ceil(mid + targetSpan / 2);
+        if (maxV <= minV) maxV = minV + 10;
+        const range = maxV - minV;
+
+        const padding = 4;
+        const xs = data.map((_,i) => (i / (data.length - 1)) * W);
+        const ys = data.map(v => H - padding - ((v - minV) / range) * (H - 2 * padding));
+        const pts = xs.map((x,i) => `${x},${ys[i]}`);
+        const areaD = `M${pts[0]} L${pts.join(' L')} L${W},${H} L0,${H} Z`;
+        const gid = `sg_${uid}`;
+        
+        return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:38px;display:block;background:rgba(0,0,0,0.01);border-radius:4px;border:1px solid rgba(0,0,0,0.04);" preserveAspectRatio="none">
           <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${color}" stop-opacity="0.22"/>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0.02"/>
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.09"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.0"/>
           </linearGradient></defs>
           <path d="${areaD}" fill="url(#${gid})"/>
-          <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="${xs[xs.length-1]}" cy="${ys[ys.length-1]}" r="2.5" fill="${color}" opacity="0.9"/>
+          <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="${xs[xs.length-1]}" cy="${ys[ys.length-1]}" r="2" fill="${color}" opacity="0.95"/>
         </svg>`;
     };
 
@@ -3006,10 +3021,10 @@ function renderIntelDashboard() {
           </div>
           <table class="km-table">
             <tr>
-              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);line-height:1.2;text-align:center;padding:4px;">
-                Attacker <span style="font-weight:400;color:var(--text-tertiary);">(Row)</span><br>
-                <span style="font-size:0.48rem;color:var(--text-tertiary);">vs</span><br>
-                Victim <span style="font-weight:400;color:var(--text-tertiary);">(Col)</span>
+              <th class="km-attacker-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
+                Attacker <span style="font-weight:700;color:#52525b;">(Row)</span><br>
+                <span style="font-size:0.5rem;color:#71717a;font-weight:600;">vs</span><br>
+                Victim <span style="font-weight:700;color:#52525b;">(Col)</span>
               </th>`;
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
@@ -3049,10 +3064,10 @@ function renderIntelDashboard() {
           </div>
           <table class="km-table">
             <tr>
-              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);line-height:1.2;text-align:center;padding:4px;">
-                Stance Owner <span style="font-weight:400;color:var(--text-tertiary);">(Row)</span><br>
-                <span style="font-size:0.48rem;color:var(--text-tertiary);">towards</span><br>
-                Target <span style="font-weight:400;color:var(--text-tertiary);">(Col)</span>
+              <th class="km-attacker-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
+                Stance Owner <span style="font-weight:700;color:#52525b;">(Row)</span><br>
+                <span style="font-size:0.5rem;color:#71717a;font-weight:600;">towards</span><br>
+                Target <span style="font-weight:700;color:#52525b;">(Col)</span>
               </th>`;
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
