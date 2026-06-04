@@ -3017,10 +3017,9 @@ function renderIntelDashboard() {
           <div class="intel-section-title">🎯 Kill Attribution Matrix</div>
           <table class="km-table">
             <tr>
-              <th class="km-corner-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
-                Attacker <span style="font-weight:700;color:#52525b;">(Row)</span><br>
-                <span style="font-size:0.5rem;color:#71717a;font-weight:600;">vs</span><br>
-                Victim <span style="font-weight:700;color:#52525b;">(Col)</span>
+              <th class="km-diagonal-cell" style="position:relative; padding:0; min-width:72px; height:42px; background: linear-gradient(135deg, transparent calc(50% - 0.5px), rgba(24,24,27,0.12) calc(50% - 0.5px), rgba(24,24,27,0.12) calc(50% + 0.5px), transparent calc(50% + 0.5px)) !important; border:none !important; border-bottom:1px solid rgba(0,0,0,0.06) !important; border-right:1px solid rgba(0,0,0,0.06) !important;">
+                <span style="position:absolute; top:4px; right:6px; font-size:0.48rem; color:#71717a; font-weight:800; text-transform:uppercase; font-family:'Outfit',sans-serif; letter-spacing:0.02em;">Victim</span>
+                <span style="position:absolute; bottom:4px; left:6px; font-size:0.48rem; color:#71717a; font-weight:800; text-transform:uppercase; font-family:'Outfit',sans-serif; letter-spacing:0.02em;">Attacker</span>
               </th>`;
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
@@ -3058,10 +3057,9 @@ function renderIntelDashboard() {
           <div class="intel-section-title">🕊️ Diplomatic Stances Matrix</div>
           <table class="km-table">
             <tr>
-              <th class="km-corner-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
-                Stance Owner <span style="font-weight:700;color:#52525b;">(Row)</span><br>
-                <span style="font-size:0.5rem;color:#71717a;font-weight:600;">towards</span><br>
-                Target <span style="font-weight:700;color:#52525b;">(Col)</span>
+              <th class="km-diagonal-cell" style="position:relative; padding:0; min-width:72px; height:42px; background: linear-gradient(135deg, transparent calc(50% - 0.5px), rgba(24,24,27,0.12) calc(50% - 0.5px), rgba(24,24,27,0.12) calc(50% + 0.5px), transparent calc(50% + 0.5px)) !important; border:none !important; border-bottom:1px solid rgba(0,0,0,0.06) !important; border-right:1px solid rgba(0,0,0,0.06) !important;">
+                <span style="position:absolute; top:4px; right:6px; font-size:0.48rem; color:#71717a; font-weight:800; text-transform:uppercase; font-family:'Outfit',sans-serif; letter-spacing:0.02em;">Target</span>
+                <span style="position:absolute; bottom:4px; left:6px; font-size:0.48rem; color:#71717a; font-weight:800; text-transform:uppercase; font-family:'Outfit',sans-serif; letter-spacing:0.02em;">Owner</span>
               </th>`;
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
