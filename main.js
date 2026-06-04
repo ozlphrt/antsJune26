@@ -562,7 +562,7 @@ function renderColonySetupPanel() {
     // Dynamically adjust panel width to fit all active colony columns side-by-side without overlapping
     const panel = document.getElementById('colony-setup-panel');
     if (panel) {
-        const dynamicWidth = 24 + (activeColonyCount * 98);
+        const dynamicWidth = 24 + (activeColonyCount * 112);
         panel.style.width = `${dynamicWidth}px`;
     }
 
@@ -577,7 +577,7 @@ function renderColonySetupPanel() {
         }
     }
 
-    let columnsHtml = `<div style="display:flex; gap:4px; justify-content:space-between; width:100%; padding:4px 0;">`;
+    let columnsHtml = `<div style="display:flex; gap:6px; justify-content:space-between; width:100%; padding:4px 0;">`;
 
     for (let i = 0; i < activeColonyCount; i++) {
         const config = COLONY_CONFIGS[i];
@@ -585,11 +585,21 @@ function renderColonySetupPanel() {
         const name = COLONY_NAMES[i] || `C${i}`;
         const strat = colonySetupStrategies[i];
 
-        // Personality cycle details
+        // Personality cycle details & explanation tooltip
         const pLabel = strat.personality === 'grudger' ? 'Tit-for-Tat' : (strat.personality.charAt(0).toUpperCase() + strat.personality.slice(1));
+        let pTooltip = "";
+        if (strat.personality === 'dove') {
+            pTooltip = "Dove: Friendly & peaceful. Cooperates by default, shares food/resources, and avoids conflict.";
+        } else if (strat.personality === 'hawk') {
+            pTooltip = "Hawk: Highly aggressive. Attacks other colonies on sight to seize resources.";
+        } else if (strat.personality === 'grudger') {
+            pTooltip = "Tit-for-Tat: Retaliatory but forgiving. Starts cooperative, but copies the opponent's previous action.";
+        } else if (strat.personality === 'bully') {
+            pTooltip = "Bully: Exploitative but cowardly. Preys on the cooperative, but flees if countered.";
+        }
 
         // Stances by other colonies towards this colony (i)
-        let stanceDotsHtml = `<div style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center; margin-top:5px; width:100%;">`;
+        let stanceDotsHtml = `<div style="display:flex; flex-wrap:wrap; gap:4px; justify-content:center; margin-top:6px; width:100%;">`;
         for (let j = 0; j < activeColonyCount; j++) {
             if (i === j) continue;
             const otherConfig = COLONY_CONFIGS[j];
@@ -619,9 +629,16 @@ function renderColonySetupPanel() {
             const stanceIcon = stance === 'Allied' ? '✓' : stance === 'Hostile' ? '✕' : '•';
             const shadow = stance === 'Allied' ? '0 0 3px rgba(34, 197, 94, 0.5)' : stance === 'Hostile' ? '0 0 3px rgba(239, 68, 68, 0.5)' : 'none';
 
+            // Explaining the stance on hover
+            const stanceExplain = stance === 'Allied' 
+                ? `Allied: ${COLONY_NAMES[j]} is friendly and will cooperate/share food with ${name}.` 
+                : stance === 'Hostile' 
+                    ? `Hostile: ${COLONY_NAMES[j]} is aggressive and will attack ${name} on sight.` 
+                    : `Neutral: ${COLONY_NAMES[j]} will ignore ${name} unless attacked or provoked.`;
+
             stanceDotsHtml += `
-                <button class="setup-stance-dot" data-from="${j}" data-to="${i}" title="${COLONY_NAMES[j]}'s stance to ${name}: ${stance}" style="padding:2.5px 5px; border-radius:6px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.46rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:2px;">
-                    <span style="font-size:0.5rem; line-height:1; font-weight:900;">${stanceIcon}</span> ${otherShortName}
+                <button class="setup-stance-dot" data-from="${j}" data-to="${i}" title="${stanceExplain}" style="padding:4px 8px; border-radius:8px; background:${bgStance}; border:1px solid rgba(255,255,255,0.15); color:#fff; font-size:0.58rem; font-weight:800; font-family:'Space Grotesk', sans-serif; cursor:pointer; box-shadow:${shadow}; transition:all 0.12s ease; outline:none; white-space:nowrap; display:inline-flex; align-items:center; gap:3px;">
+                    <span style="font-size:0.62rem; line-height:1; font-weight:900;">${stanceIcon}</span> ${otherShortName}
                 </button>
             `;
         }
@@ -630,13 +647,13 @@ function renderColonySetupPanel() {
         columnsHtml += `
             <div style="flex:1; display:flex; flex-direction:column; align-items:center; background:none; border:none; padding:4px 0; min-width:0;">
                 <!-- Personality capsule badge (closer to frame with high-contrast background) -->
-                <span style="font-size:0.48rem; font-weight:800; background:#18181b; color:#fff; border:1.5px solid ${hex}; padding:2px 5px; border-radius:10px; text-transform:uppercase; letter-spacing:0.02em; margin-bottom:1px; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:95%;">
+                <span title="${pTooltip}" style="font-size:0.62rem; font-weight:800; background:#18181b; color:#fff; border:1.5px solid ${hex}; padding:3px 6px; border-radius:10px; text-transform:uppercase; letter-spacing:0.02em; margin-bottom:2px; box-shadow:0 1px 3px rgba(0,0,0,0.1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:95%; cursor:help;">
                     ${pLabel}
                 </span>
 
                 <!-- Clickable Ant Headshot (Cycles strategy, border only, background transparent) -->
                 <button class="setup-ant-click-btn" data-col="${i}" style="background:none; border:none; padding:0; cursor:pointer; outline:none; transition:transform 0.1s ease; border-radius:10px;">
-                    <div style="position:relative; margin:2px 0; width:90px; height:120px; display:flex; align-items:center; justify-content:center; background:none; border-radius:10px; border:2px solid ${hex}; transition: all 0.15s ease;">
+                    <div class="ant-frame" style="position:relative; margin:2px 0; width:90px; height:120px; display:flex; align-items:center; justify-content:center; background:none; border-radius:10px; border:2px solid ${hex}; transition: all 0.15s ease; --colony-color: ${hex};">
                         <img class="tint-headshot-lazy" data-personality="${strat.personality}" data-color="${hex}" style="width:82px; height:112px; object-fit:contain;" />
                     </div>
                 </button>
@@ -2607,11 +2624,15 @@ function renderIntelDashboard() {
         // ── Kill Attribution Matrix ──
         html += `<div class="intel-widget">
           <div class="intel-section-title">🎯 Kill Attribution Matrix
-            <span style="font-size:0.55rem;font-weight:400;text-transform:none;color:var(--text-secondary);margin-left:auto;">Row = Attacker · Col = Victim</span>
+            <span style="font-size:0.6rem;font-weight:600;text-transform:none;color:var(--text-secondary);margin-left:auto;background:rgba(0,0,0,0.04);padding:2px 6px;border-radius:4px;">Row = Attacker ⚔️ Column = Victim</span>
           </div>
           <table class="km-table">
             <tr>
-              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);">↓ Atk \\ Vic →</th>`;
+              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);line-height:1.2;text-align:center;padding:4px;">
+                Attacker <span style="font-weight:400;color:var(--text-tertiary);">(Row)</span><br>
+                <span style="font-size:0.48rem;color:var(--text-tertiary);">vs</span><br>
+                Victim <span style="font-weight:400;color:var(--text-tertiary);">(Col)</span>
+              </th>`;
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
             html += `<th style="color:${hex};">${colPillCompact(c.colonyId, hex, true)}</th>`;
@@ -2646,11 +2667,15 @@ function renderIntelDashboard() {
         // ── Diplomatic Stances Matrix ──
         html += `<div class="intel-widget" style="margin-top: 8px;">
           <div class="intel-section-title">🕊️ Diplomatic Stances Matrix
-            <span style="font-size:0.55rem;font-weight:400;text-transform:none;color:var(--text-secondary);margin-left:auto;">Row's stance towards Column</span>
+            <span style="font-size:0.6rem;font-weight:600;text-transform:none;color:var(--text-secondary);margin-left:auto;background:rgba(0,0,0,0.04);padding:2px 6px;border-radius:4px;">Row ➔ Column Stance</span>
           </div>
           <table class="km-table">
             <tr>
-              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);">↓ Stance \\ vs →</th>`;
+              <th class="km-attacker-label" style="font-size:0.52rem;color:var(--text-secondary);line-height:1.2;text-align:center;padding:4px;">
+                Stance Owner <span style="font-weight:400;color:var(--text-tertiary);">(Row)</span><br>
+                <span style="font-size:0.48rem;color:var(--text-tertiary);">towards</span><br>
+                Target <span style="font-weight:400;color:var(--text-tertiary);">(Col)</span>
+              </th>`;
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
             html += `<th style="color:${hex};">${colPillCompact(c.colonyId, hex, true)}</th>`;
