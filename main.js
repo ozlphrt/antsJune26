@@ -2716,20 +2716,14 @@ function renderIntelDashboard() {
                   <span class="dot" style="background:${hexColor};"></span>${getColName(colId)}</span>`;
     };
 
-    // Compact colony pill (dot + abbreviated name) for matrix / narrow spaces
+    // Compact colony pill (no dot, full name, solid dark background) for matrix / narrow spaces
     const colPillCompact = (colId, hexColor, light = false) => {
-        const shortNames = ['GRN', 'BLU', 'GLD', 'PRP', 'TEL', 'LIM'];
-        const name = shortNames[colId] || `C${colId}`;
-        const r = parseInt(hexColor.slice(1,3),16);
-        const g = parseInt(hexColor.slice(3,5),16);
-        const b = parseInt(hexColor.slice(5,7),16);
-        if (light) {
-            return `<span class="col-pill compact" style="background:rgba(${r},${g},${b},0.12);color:${hexColor};border:1px solid rgba(${r},${g},${b},0.3);">
-                      <span class="dot" style="background:${hexColor};"></span>${name}</span>`;
-        } else {
-            return `<span class="col-pill compact" style="background:${hexColor};color:#fff;border:1px solid rgba(255,255,255,0.2);">
-                      <span class="dot" style="background:rgba(255,255,255,0.55);"></span>${name}</span>`;
-        }
+        const fullNames = ['GREEN', 'BLUE', 'GOLD', 'PURPLE', 'TEAL', 'LIME'];
+        const name = fullNames[colId] || `COLONY ${colId}`;
+        const darkColors = ['#15803d', '#1d4ed8', '#b45309', '#6b21a8', '#0f766e', '#4d7c0f'];
+        const bg = darkColors[colId] || hexColor;
+        
+        return `<span class="col-pill compact" style="background:${bg} !important; color:#ffffff !important; font-weight:800 !important; border:1px solid rgba(0,0,0,0.15); text-shadow:0 1px 2px rgba(0,0,0,0.25); display:inline-flex; align-items:center; justify-content:center;">${name}</span>`;
     };
 
     // HP distribution bar + legend
@@ -3020,9 +3014,7 @@ function renderIntelDashboard() {
 
         // ── Kill Attribution Matrix ──
         html += `<div class="intel-widget">
-          <div class="intel-section-title">🎯 Kill Attribution Matrix
-            <span style="font-size:0.6rem;font-weight:600;text-transform:none;color:var(--text-secondary);margin-left:auto;background:rgba(0,0,0,0.04);padding:2px 6px;border-radius:4px;">Row = Attacker ⚔️ Column = Victim</span>
-          </div>
+          <div class="intel-section-title">🎯 Kill Attribution Matrix</div>
           <table class="km-table">
             <tr>
               <th class="km-corner-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
@@ -3063,9 +3055,7 @@ function renderIntelDashboard() {
 
         // ── Diplomatic Stances Matrix ──
         html += `<div class="intel-widget" style="margin-top: 8px;">
-          <div class="intel-section-title">🕊️ Diplomatic Stances Matrix
-            <span style="font-size:0.6rem;font-weight:600;text-transform:none;color:var(--text-secondary);margin-left:auto;background:rgba(0,0,0,0.04);padding:2px 6px;border-radius:4px;">Row ➔ Column Stance</span>
-          </div>
+          <div class="intel-section-title">🕊️ Diplomatic Stances Matrix</div>
           <table class="km-table">
             <tr>
               <th class="km-corner-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">

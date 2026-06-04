@@ -1183,14 +1183,11 @@ button {
     flex-shrink: 0;
 }
 .col-pill.compact {
-    padding: 1px 4px 1px 3px !important;
-    font-size: 0.5rem !important;
-    gap: 2.5px !important;
-    border-radius: 6px !important;
-}
-.col-pill.compact .dot {
-    width: 4px !important;
-    height: 4px !important;
+    padding: 3px 7px !important;
+    font-size: 0.58rem !important;
+    font-weight: 800 !important;
+    border-radius: 4px !important;
+    letter-spacing: 0.02em !important;
 }
 
 /* ── Section / Widget Title ── */
