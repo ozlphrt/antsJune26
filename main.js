@@ -569,9 +569,10 @@ function renderColonySetupPanel() {
     // Make sure strategies are initialized
     for (let i = 0; i < activeColonyCount; i++) {
         if (!colonySetupStrategies[i]) {
-            const defaultPersonalities = ['dove', 'hawk', 'grudger', 'bully', 'dove', 'hawk'];
+            const personalities = ['dove', 'hawk', 'grudger', 'bully'];
+            const randomPers = personalities[Math.floor(Math.random() * personalities.length)];
             colonySetupStrategies[i] = {
-                personality: defaultPersonalities[i] || 'dove',
+                personality: randomPers,
                 stances: {}
             };
         }
@@ -823,9 +824,10 @@ function rebuildSimulation() {
         
         // Apply configured game theory personality and stances
         if (!colonySetupStrategies[i]) {
-            const defaultPersonalities = ['dove', 'hawk', 'grudger', 'bully', 'dove', 'hawk'];
+            const personalities = ['dove', 'hawk', 'grudger', 'bully'];
+            const randomPers = personalities[Math.floor(Math.random() * personalities.length)];
             colonySetupStrategies[i] = {
-                personality: defaultPersonalities[i] || 'dove',
+                personality: randomPers,
                 stances: {}
             };
         }
