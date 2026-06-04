@@ -2959,26 +2959,30 @@ function renderIntelDashboard() {
                 </span>
               </div>`;
 
-            // Sparkline
-            html += `<div style="margin-bottom:6px;">${sparklineHtml(hist?hist.population:[], hex, c.colonyId)}</div>`;
-
-            // Stats grid
-            html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:7px;">
-              <div class="vitals-stat-cell">
-                <div class="vitals-stat-num" style="color:${hex};">${c.ants.length}</div>
-                <div class="vitals-stat-label">Ants</div>
+            // Sparkline + Stats Side-by-Side (Graph Left, 2x2 stats grid Right)
+            html += `<div style="display:flex; gap:8px; align-items:stretch; margin-bottom:7px;">
+              <!-- Left: Graph -->
+              <div style="flex:1.3; min-width:0; display:flex; flex-direction:column; justify-content:center;">
+                ${sparklineHtml(hist?hist.population:[], hex, c.colonyId)}
               </div>
-              <div class="vitals-stat-cell">
-                <div class="vitals-stat-num">${Math.round(c.meanHp||0)}</div>
-                <div class="vitals-stat-label">Avg HP</div>
-              </div>
-              <div class="vitals-stat-cell">
-                <div class="vitals-stat-num" style="color:${kills>deaths?'#22c55e':'#ef4444'};">${kd}</div>
-                <div class="vitals-stat-label">K/D</div>
-              </div>
-              <div class="vitals-stat-cell">
-                <div class="vitals-stat-num">${aggPct}%</div>
-                <div class="vitals-stat-label">Combat</div>
+              <!-- Right: 2x2 stats grid -->
+              <div style="flex:1; display:grid; grid-template-columns:repeat(2,1fr); gap:4px; min-width:0;">
+                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                  <div class="vitals-stat-num" style="color:${hex}; font-size:0.75rem; line-height:1.1;">${c.ants.length}</div>
+                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">Ants</div>
+                </div>
+                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                  <div class="vitals-stat-num" style="font-size:0.75rem; line-height:1.1;">${Math.round(c.meanHp||0)}</div>
+                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">Avg HP</div>
+                </div>
+                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                  <div class="vitals-stat-num" style="color:${kills>deaths?'#22c55e':'#ef4444'}; font-size:0.75rem; line-height:1.1;">${kd}</div>
+                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">K/D</div>
+                </div>
+                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                  <div class="vitals-stat-num" style="font-size:0.75rem; line-height:1.1;">${aggPct}%</div>
+                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">Combat</div>
+                </div>
               </div>
             </div>`;
 
