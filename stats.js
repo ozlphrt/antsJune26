@@ -287,6 +287,12 @@ export class StatsEngine {
                 return names[id] ? `${names[id]} Colony` : `Colony ${id}`;
             };
 
+            // Resolve raw color name helper
+            const getColColorName = (id) => {
+                const names = ["Green", "Blue", "Gold", "Purple", "Teal", "Lime"];
+                return names[id] ? names[id] : `Colony ${id}`;
+            };
+
             // Trigger narrative event alerts for high risk or threat
             if (risk >= 70) {
                 this.pushEvent('risk', `⚠️ ${getColName(c.colonyId)} is in critical danger of extinction!`, `${c.colonyId}_high_risk`, 20000);
@@ -300,14 +306,14 @@ export class StatsEngine {
                 const secondsToExtinction = Math.ceil(totalAnts / Math.abs(slope));
                 predictionsList.push({
                     icon: '💀',
-                    title: `${getColName(c.colonyId)} extinction imminent`,
+                    title: `${getColColorName(c.colonyId)} Extinction Imminent`,
                     desc: `At current decline rate of ${Math.abs(slope).toFixed(1)} ants/s, population is predicted to hit zero in ${secondsToExtinction}s.`
                 });
             } else if (slope < -0.3 && totalAnts > 5) {
                 const projectedPopulation = Math.max(0, Math.round(totalAnts + slope * 30));
                 predictionsList.push({
                     icon: '⚠️',
-                    title: `${getColName(c.colonyId)} severe attrition`,
+                    title: `${getColColorName(c.colonyId)} Severe Attrition`,
                     desc: `High combat mortality predicts population will drop from ${totalAnts} to ${projectedPopulation} within the next 30s.`
                 });
             }
@@ -315,7 +321,7 @@ export class StatsEngine {
             if (aggressionIndex > 0.5 && totalAnts > 5) {
                 predictionsList.push({
                     icon: '⚔️',
-                    title: `${getColName(c.colonyId)} resource lock`,
+                    title: `${getColColorName(c.colonyId)} Resource Lock`,
                     desc: `With ${Math.round(aggressionIndex * 100)}% of workers engaged in combat, food collection is predicted to stall over the next 45s.`
                 });
             }
@@ -324,7 +330,7 @@ export class StatsEngine {
                 const etaSeconds = Math.max(5, Math.round(minThreatDist / 1.5));
                 predictionsList.push({
                     icon: '🚨',
-                    title: `Nest breach predicted for ${getColName(c.colonyId)}`,
+                    title: `Nest Breach Predicted for ${getColColorName(c.colonyId)}`,
                     desc: `Enemies approaching nest at ${Math.round(minThreatDist)}m. Intruder breach expected in approximately ${etaSeconds}s.`
                 });
             }
@@ -351,39 +357,117 @@ export class StatsEngine {
                 if (secondsToMilestone > 0 && secondsToMilestone < 300) {
                     predictionsList.push({
                         icon: '📈',
-                        title: `${getColName(c.colonyId)} expansion forecast`,
+                        title: `${getColColorName(c.colonyId)} Expansion Forecast`,
                         desc: `Gathering velocity predicts colony will secure the ${milestone} food milestone in ${secondsToMilestone}s.`
                     });
                 }
             }
         });
 
-        // Determine general predictions (Dominance)
-        const sortedByFood = [...colonies].sort((a, b) => b.foodCollected - a.foodCollected);
-        if (sortedByFood.length > 0 && sortedByFood[0].foodCollected > 10) {
-            const lead = sortedByFood[0];
-            const leadRisk = lead.extinctionRisk || 0;
+        // ── Resolve friendly colony name helper for global lists ──
+        const getColNameGlobal = (id) => {
             const names = ["Green", "Blue", "Gold", "Purple", "Teal", "Lime"];
-            const leadColName = names[lead.colonyId] ? `${names[lead.colonyId]} Colony` : `Colony ${lead.colonyId}`;
-            if (leadRisk < 40) {
-                predictionsList.push({
-                    icon: '🏆',
-                    title: `${leadColName} victory path`,
-                    desc: `Current resource dominance and low hazard score projects high likelihood of victory in under 2 minutes.`
-                });
+            return names[id] ? names[id] : `Colony ${id}`;
+        };
+
+        // ── CALCULATE DYNAMIC WIN PROBABILITIES ──
+        let totalScore = 0;
+        const scores = {};
+        colonies.forEach(c => {
+            const antsCount = c.ants.length;
+            const food = c.foodCollected;
+            const hp = c.meanHp || 0;
+            const rsk = c.extinctionRisk || 0;
+            
+            // Score weightings: population size, food stored, health profile, and extinction risk
+            let score = (antsCount * 2.0) + (food * 3.0) + (hp * 0.4) - (rsk * 1.5);
+            score = Math.max(5, score); // minimum score of 5
+            scores[c.colonyId] = score;
+            totalScore += score;
+        });
+
+        const winProbs = {};
+        colonies.forEach(c => {
+            winProbs[c.colonyId] = totalScore > 0 ? Math.round((scores[c.colonyId] / totalScore) * 100) : Math.round(100 / colonies.length);
+        });
+
+        // Adjust probabilities so they sum to 100%
+        let probSum = 0;
+        colonies.forEach(c => { probSum += winProbs[c.colonyId]; });
+        if (probSum > 0 && probSum !== 100 && colonies.length > 0) {
+            const diff = 100 - probSum;
+            winProbs[colonies[0].colonyId] += diff;
+        }
+
+        // Win Probability prediction (placed at the top for maximum visibility)
+        const probDesc = colonies.map(c => `${getColNameGlobal(c.colonyId)}: ${winProbs[c.colonyId]}%`).join(' | ');
+        const topPredictions = [];
+        
+        topPredictions.push({
+            icon: '🔮',
+            title: 'Win Probability Forecast',
+            desc: `Current metrics model win odds at: ${probDesc}. Calculations incorporate population size, food supply, health levels, and environmental risks.`
+        });
+
+        // ── GAME THEORY STANCE ANALYSIS ──
+        for (let i = 0; i < colonies.length; i++) {
+            for (let j = i + 1; j < colonies.length; j++) {
+                const cA = colonies[i];
+                const cB = colonies[j];
+                const nameA = getColNameGlobal(cA.colonyId);
+                const nameB = getColNameGlobal(cB.colonyId);
+                const stanceA = cA.stances[cB.colonyId] || 'Neutral';
+                const stanceB = cB.stances[cA.colonyId] || 'Neutral';
+                const persA = cA.personality || 'dove';
+                const persB = cB.personality || 'dove';
+
+                if (stanceA === 'Allied' && stanceB === 'Allied') {
+                    topPredictions.push({
+                        icon: '🤝',
+                        title: `Coalition: ${nameA} & ${nameB}`,
+                        desc: `Mutual alliance is maintaining zero-casualty coexistence. Cooperative harvesting increases joint resource efficiency by ~30%.`
+                    });
+                } else if (stanceA === 'Hostile' && stanceB === 'Hostile') {
+                    topPredictions.push({
+                        icon: '⚔️',
+                        title: `Mutual Attrition: ${nameA} vs ${nameB}`,
+                        desc: `Both colonies are locked in mutual hostility. Heavy attrition is projected to reduce growth rates of both sides by 45%.`
+                    });
+                } else if (persA === 'hawk' && persB === 'dove' && stanceA === 'Hostile') {
+                    topPredictions.push({
+                        icon: '🦅',
+                        title: `Asymmetric Exploitation: ${nameA} on ${nameB}`,
+                        desc: `Hawk ${nameA} is actively exploiting Dove ${nameB}. Without defensive retaliation, ${nameB} is projected to lose 35% of its workforce.`
+                    });
+                } else if (persA === 'bully' && persB === 'dove' && stanceA === 'Hostile') {
+                    topPredictions.push({
+                        icon: '🐺',
+                        title: `Predatory Bullying: ${nameA} targeting ${nameB}`,
+                        desc: `Bully ${nameA} is hunting workers from Dove ${nameB}. Conflict is expected to persist unless ${nameB} mounts a retaliatory defense.`
+                    });
+                } else if (persA === 'grudger' && stanceA === 'Hostile' && cA.ants.length > 5) {
+                    topPredictions.push({
+                        icon: '⚖️',
+                        title: `Retributive Retaliation: ${nameA}`,
+                        desc: `Tit-for-Tat ${nameA} has triggered defensive retaliation against ${nameB}. The local border war will escalate until cooperative behavior is restored.`
+                    });
+                }
             }
         }
 
+        // Combine lists, prioritizing dynamic forecast and game theory insights
+        const finalPredictions = [...topPredictions, ...predictionsList];
+
         // Add default prediction if empty
-        if (predictionsList.length === 0) {
-            predictionsList.push({
+        if (finalPredictions.length === 0) {
+            finalPredictions.push({
                 icon: '⏳',
-                title: 'Simulation stabilizing',
+                title: 'Simulation Stabilizing',
                 desc: 'No critical events forecast. All colonies predicted to maintain current population levels for the next 60s.'
             });
         }
 
-        this.predictions = predictionsList.slice(0, 5);
+        this.predictions = finalPredictions.slice(0, 5);
     }
 }
 
