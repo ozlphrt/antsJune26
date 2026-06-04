@@ -559,6 +559,13 @@ function renderColonySetupPanel() {
     const list = document.getElementById('setup-colonies-list');
     if (!list) return;
 
+    // Dynamically adjust panel width to fit all active colony columns side-by-side without overlapping
+    const panel = document.getElementById('colony-setup-panel');
+    if (panel) {
+        const dynamicWidth = 24 + (activeColonyCount * 98);
+        panel.style.width = `${dynamicWidth}px`;
+    }
+
     // Make sure strategies are initialized
     for (let i = 0; i < activeColonyCount; i++) {
         if (!colonySetupStrategies[i]) {
