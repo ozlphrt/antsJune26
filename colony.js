@@ -50,7 +50,7 @@ class Ant {
     }
     
     // Ant sensory decision making
-    steer(pheromones, nestX, nestZ, foods, sensorAngleRad, sensorDist, speed) {
+    steer(pheromones, nestX, nestZ, foods, sensorAngleRad, sensorDist, speed, allColonies = null, ownColonyId = 0) {
         // 0. Combat steering priority
         if (this.combatTarget && this.combatTarget.hp > 0) {
             const dx = this.combatTarget.x - this.x;
@@ -67,27 +67,54 @@ class Ant {
 
         // 1. Direct Target Attraction
         if (this.state === 'explore') {
-            // Look for nearby food piles to steer directly toward them (scaled for medium food size)
-            let closestFood = null;
-            let minDist = 16.0; // Food detection radius
+            const freeFoodAvailable = foods.some(f => f.amount > 0);
             
-            for (let i = 0; i < foods.length; i++) {
-                const food = foods[i];
-                if (food.amount <= 0) continue;
+            if (freeFoodAvailable) {
+                // Look for nearby food piles to steer directly toward them (scaled for medium food size)
+                let closestFood = null;
+                let minDist = 16.0; // Food detection radius
                 
-                const dx = food.x - this.x;
-                const dz = food.z - this.z;
-                const d = Math.sqrt(dx*dx + dz*dz);
-                if (d < minDist) {
-                    minDist = d;
-                    closestFood = food;
+                for (let i = 0; i < foods.length; i++) {
+                    const food = foods[i];
+                    if (food.amount <= 0) continue;
+                    
+                    const dx = food.x - this.x;
+                    const dz = food.z - this.z;
+                    const d = Math.sqrt(dx*dx + dz*dz);
+                    if (d < minDist) {
+                        minDist = d;
+                        closestFood = food;
+                    }
                 }
-            }
-            
-            if (closestFood) {
-                const targetAngle = Math.atan2(closestFood.x - this.x, closestFood.z - this.z);
-                this.angle = this.blendAngles(this.angle, targetAngle, 0.25);
-                return;
+                
+                if (closestFood) {
+                    const targetAngle = Math.atan2(closestFood.x - this.x, closestFood.z - this.z);
+                    this.angle = this.blendAngles(this.angle, targetAngle, 0.25);
+                    return;
+                }
+            } else if (allColonies) {
+                // Free food depleted: steer toward the closest active opponent nest that has collected food
+                let closestOpponentNest = null;
+                let minDist = 99999.0; // Large range to track nests across map
+                
+                for (let i = 0; i < allColonies.length; i++) {
+                    const col = allColonies[i];
+                    if (col.colonyId === ownColonyId || col.isGraveyard || col.foodCollected <= 0) continue;
+                    
+                    const dx = col.nestX - this.x;
+                    const dz = col.nestZ - this.z;
+                    const d = Math.sqrt(dx*dx + dz*dz);
+                    if (d < minDist) {
+                        minDist = d;
+                        closestOpponentNest = col;
+                    }
+                }
+                
+                if (closestOpponentNest) {
+                    const targetAngle = Math.atan2(closestOpponentNest.nestX - this.x, closestOpponentNest.nestZ - this.z);
+                    this.angle = this.blendAngles(this.angle, targetAngle, 0.25);
+                    return;
+                }
             }
         } else {
             // State: return. Steer directly to Nest if close enough
@@ -263,6 +290,7 @@ export class ColonyManager {
         this.foods = sharedFoods || [];
         this.obstacles = sharedObstacles || [];
         this.foodCollected = 0;
+        this.foodPileData = [];
         this.antsDefeated = 0;
         
         // Simulation parameters (controlled via UI)
@@ -272,6 +300,7 @@ export class ColonyManager {
         
         // Visual variables
         this.instancedMesh = null;
+        this.foodPileGroup = null;
         this.createAntVisuals(initialAntCount);
         
         // Setup initial population
@@ -322,6 +351,33 @@ export class ColonyManager {
         this.instancedMesh.castShadow = true;
         this.instancedMesh.receiveShadow = false;
         this.scene.add(this.instancedMesh);
+        
+        // Immediately color and position existing ants on the new mesh to prevent rendering as default white
+        if (this.ants && this.ants.length > 0) {
+            const dummy = new THREE.Object3D();
+            const colorForaging = this.exploreColor;
+            for (let i = 0; i < Math.min(this.ants.length, count); i++) {
+                const ant = this.ants[i];
+                dummy.position.set(ant.x, ant.y + 0.3, ant.z);
+                
+                const dirX = Math.sin(ant.angle);
+                const dirZ = Math.cos(ant.angle);
+                const forward = new THREE.Vector3(dirX, 0, dirZ).normalize();
+                const normal = ant.normal || new THREE.Vector3(0, 1, 0);
+                const right = new THREE.Vector3().crossVectors(forward, normal).normalize();
+                const adjustedForward = new THREE.Vector3().crossVectors(normal, right).normalize();
+                const rotMatrix = new THREE.Matrix4().makeBasis(right, normal, adjustedForward);
+                dummy.rotation.setFromRotationMatrix(rotMatrix);
+                dummy.updateMatrix();
+                
+                this.instancedMesh.setMatrixAt(i, dummy.matrix);
+                this.instancedMesh.setColorAt(i, colorForaging);
+            }
+            this.instancedMesh.instanceMatrix.needsUpdate = true;
+            if (this.instancedMesh.instanceColor) {
+                this.instancedMesh.instanceColor.needsUpdate = true;
+            }
+        }
 
         // Build the small red food carrying mesh (larger and brighter for maximum visibility)
         const foodCarrierGeom = new THREE.SphereGeometry(0.26, 6, 6);
@@ -337,6 +393,183 @@ export class ColonyManager {
         this.foodCarriedMesh = new THREE.InstancedMesh(foodCarrierGeom, foodCarrierMat, count);
         this.foodCarriedMesh.castShadow = true;
         this.scene.add(this.foodCarriedMesh);
+    }
+
+    updateNestFoodPile(antX, antZ) {
+        if (!this.foodPileGroup) {
+            this.foodPileGroup = new THREE.Group();
+            const yPos = getTerrainHeight(this.nestX, this.nestZ);
+            this.foodPileGroup.position.set(this.nestX, yPos, this.nestZ);
+            this.scene.add(this.foodPileGroup);
+        }
+        
+        const contactRadius = 0.45;
+        const maxLayers = 3; // Capped stack height (0, 1, 2, 3) to prevent tall floating columns
+        
+        const getLayerAt = (x, z) => {
+            let highestLayer = -1;
+            for (const p of this.foodPileData) {
+                const pdx = p.x - x;
+                const pdz = p.z - z;
+                if (Math.sqrt(pdx * pdx + pdz * pdz) < contactRadius) {
+                    if (p.layer > highestLayer) {
+                        highestLayer = p.layer;
+                    }
+                }
+            }
+            return highestLayer + 1;
+        };
+        
+        const searchSteps = [
+            // Ring 1 (close offsets)
+            { dx: 0.35, dz: 0 }, { dx: -0.35, dz: 0 }, { dx: 0, dz: 0.35 }, { dx: 0, dz: -0.35 },
+            { dx: 0.25, dz: 0.25 }, { dx: -0.25, dz: 0.25 }, { dx: 0.25, dz: -0.25 }, { dx: -0.25, dz: -0.25 },
+            // Ring 2 (wider offsets)
+            { dx: 0.7, dz: 0 }, { dx: -0.7, dz: 0 }, { dx: 0, dz: 0.7 }, { dx: 0, dz: -0.7 },
+            { dx: 0.5, dz: 0.5 }, { dx: -0.5, dz: 0.5 }, { dx: 0.5, dz: -0.5 }, { dx: -0.5, dz: -0.5 }
+        ];
+        
+        // If ant coordinates are provided, compute position relative to nest center based on approach angle
+        if (antX !== undefined && antZ !== undefined) {
+            const dx = antX - this.nestX;
+            const dz = antZ - this.nestZ;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            
+            // Place food at the outer boundary of the nest mound
+            const placementRadius = 2.4;
+            let rx = dist > 0 ? (dx / dist) * placementRadius : placementRadius;
+            let rz = dist > 0 ? (dz / dist) * placementRadius : 0;
+            
+            let layer = getLayerAt(rx, rz);
+            
+            // Roll-off: Spill over horizontally to nearby spots if stack is too high
+            if (layer > maxLayers) {
+                let bestRx = rx;
+                let bestRz = rz;
+                let lowestLayer = layer;
+                
+                for (const step of searchSteps) {
+                    const testRx = rx + step.dx;
+                    const testRz = rz + step.dz;
+                    const testLayer = getLayerAt(testRx, testRz);
+                    if (testLayer < lowestLayer) {
+                        lowestLayer = testLayer;
+                        bestRx = testRx;
+                        bestRz = testRz;
+                        if (lowestLayer <= maxLayers) {
+                            break;
+                        }
+                    }
+                }
+                rx = bestRx;
+                rz = bestRz;
+                layer = lowestLayer;
+            }
+            
+            this.foodPileData.push({
+                x: rx,
+                z: rz,
+                angle: Math.atan2(rz, rx),
+                layer: layer
+            });
+        }
+        
+        // Ensure foodPileData length matches foodCollected count
+        const targetChunks = this.foodCollected;
+        
+        while (this.foodPileData.length < targetChunks) {
+            // Generate fallback piece at random angle if there's any data mismatch
+            const angle = Math.random() * Math.PI * 2;
+            let rx = Math.cos(angle) * 2.4;
+            let rz = Math.sin(angle) * 2.4;
+            
+            let layer = getLayerAt(rx, rz);
+            
+            if (layer > maxLayers) {
+                let bestRx = rx;
+                let bestRz = rz;
+                let lowestLayer = layer;
+                
+                for (const step of searchSteps) {
+                    const testRx = rx + step.dx;
+                    const testRz = rz + step.dz;
+                    const testLayer = getLayerAt(testRx, testRz);
+                    if (testLayer < lowestLayer) {
+                        lowestLayer = testLayer;
+                        bestRx = testRx;
+                        bestRz = testRz;
+                        if (lowestLayer <= maxLayers) {
+                            break;
+                        }
+                    }
+                }
+                rx = bestRx;
+                rz = bestRz;
+                layer = lowestLayer;
+            }
+            
+            this.foodPileData.push({
+                x: rx,
+                z: rz,
+                angle: angle,
+                layer: layer
+            });
+        }
+        
+        if (this.foodPileData.length > targetChunks) {
+            this.foodPileData.length = targetChunks;
+        }
+        
+        const currentChunks = this.foodPileGroup.children.length;
+        
+        if (targetChunks > currentChunks) {
+            const tsMat = new THREE.MeshStandardMaterial({
+                color: 0xef4444, // Apple red skin
+                roughness: 0.75,
+                metalness: 0.1,
+                flatShading: true
+            });
+            
+            const chunkGeom = new THREE.OctahedronGeometry(0.3, 0);
+            chunkGeom.scale(1.0, 0.45, 0.7); // Flattened wedge shape
+            
+            const yPos = getTerrainHeight(this.nestX, this.nestZ);
+            
+            for (let i = currentChunks; i < targetChunks; i++) {
+                const data = this.foodPileData[i];
+                const chunk = new THREE.Mesh(chunkGeom, tsMat);
+                chunk.castShadow = true;
+                chunk.receiveShadow = true;
+                
+                // Calculate precise local Y offset so it rests on the terrain surface
+                const worldX = this.nestX + data.x;
+                const worldZ = this.nestZ + data.z;
+                const terrainY = getTerrainHeight(worldX, worldZ);
+                const groundY = terrainY - yPos; // terrain relative to nest center
+                
+                // Stack layers vertically
+                const yOffset = 0.05 + data.layer * 0.14; // Stack closely on top of lower pieces
+                
+                chunk.position.set(data.x, groundY + yOffset, data.z);
+                
+                // Rotate organic look based on approach angle and stack depth
+                chunk.rotation.set(
+                    (Math.sin(i * 3.1) * 0.15) - 0.075,
+                    data.angle + data.layer * 0.25,
+                    (Math.cos(i * 2.5) * 0.15) - 0.075
+                );
+                
+                this.foodPileGroup.add(chunk);
+            }
+        } else if (targetChunks < currentChunks) {
+            // Remove chunks if count goes down (e.g., reset)
+            while (this.foodPileGroup.children.length > targetChunks) {
+                const child = this.foodPileGroup.children[this.foodPileGroup.children.length - 1];
+                this.foodPileGroup.remove(child);
+                child.geometry.dispose();
+                child.material.dispose();
+            }
+        }
     }
     
     setPopulation(targetCount) {
@@ -601,6 +834,37 @@ export class ColonyManager {
                                     this.addFoodSource(ant.combatTarget.x, ant.combatTarget.z, 1, true);
                                 }
                             }
+                            
+                            // Apply combat mode scenario
+                            const mode = window.combatMode || 'respawn';
+                            if (mode === 'removal' && targetColony) {
+                                const defeatedAnt = ant.combatTarget;
+                                const idx = targetColony.ants.indexOf(defeatedAnt);
+                                if (idx !== -1) {
+                                    targetColony.ants.splice(idx, 1);
+                                    targetColony.createAntVisuals(targetColony.ants.length);
+                                }
+                            } else if (mode === 'conversion' && targetColony) {
+                                const defeatedAnt = ant.combatTarget;
+                                const idx = targetColony.ants.indexOf(defeatedAnt);
+                                if (idx !== -1) {
+                                    targetColony.ants.splice(idx, 1);
+                                    targetColony.createAntVisuals(targetColony.ants.length);
+                                }
+                                
+                                // Convert attributes to the winning colony
+                                defeatedAnt.colonyId = this.colonyId;
+                                defeatedAnt.hp = 100;
+                                defeatedAnt.state = 'explore';
+                                defeatedAnt.pheromoneStrength = 1.0;
+                                defeatedAnt.combatTarget = null;
+                                defeatedAnt.angle = Math.random() * Math.PI * 2;
+                                defeatedAnt.id = this.ants.length;
+                                
+                                this.ants.push(defeatedAnt);
+                                this.createAntVisuals(this.ants.length);
+                            }
+                            
                             ant.combatTarget = null;
                         }
                     }
@@ -758,76 +1022,132 @@ export class ColonyManager {
             }
         }
         
-        // Ant-to-ant physical collision avoidance for fast O(N) collision detection
-        const gridCellSize = 4.0;
-        const grid = {};
-        
-        // Helper to get key
-        const getGridKey = (x, z) => {
-            const cx = Math.floor(x / gridCellSize);
-            const cz = Math.floor(z / gridCellSize);
-            return `${cx},${cz}`;
-        };
-        
-        // Bin ants
-        for (let i = 0; i < this.ants.length; i++) {
-            const ant = this.ants[i];
-            const key = getGridKey(ant.x, ant.z);
-            if (!grid[key]) grid[key] = [];
-            grid[key].push(ant);
-        }
-        
-        const minDist = 0.65;
-        const minDistSq = minDist * minDist;
-        
-        // Resolve collisions inside cells and with adjacent cells
-        for (const key in grid) {
-            const cellAnts = grid[key];
-            const [cx, cz] = key.split(',').map(Number);
+        // Ant-to-ant physical collision avoidance (Global across all colonies to make them act as solid objects)
+        if (this.colonyId === 0 && allColonies) {
+            const gridCellSize = 3.5;
+            const grid = {};
             
-            // Check current cell and adjacent 4 cells (right, bottom-left, bottom, bottom-right)
-            const adjacentKeys = [
-                key,
-                `${cx + 1},${cz}`,
-                `${cx - 1},${cz + 1}`,
-                `${cx},${cz + 1}`,
-                `${cx + 1},${cz + 1}`
-            ];
+            const getGridKey = (x, z) => {
+                const cx = Math.floor(x / gridCellSize);
+                const cz = Math.floor(z / gridCellSize);
+                return `${cx},${cz}`;
+            };
             
-            for (let k = 0; k < adjacentKeys.length; k++) {
-                const otherKey = adjacentKeys[k];
-                const otherAnts = grid[otherKey];
-                if (!otherAnts) continue;
+            // Gather and bin ALL active ants from all colonies
+            for (let c = 0; c < allColonies.length; c++) {
+                const col = allColonies[c];
+                for (let a = 0; a < col.ants.length; a++) {
+                    const ant = col.ants[a];
+                    if (ant.hp > 0) {
+                        const key = getGridKey(ant.x, ant.z);
+                        if (!grid[key]) grid[key] = [];
+                        grid[key].push(ant);
+                    }
+                }
+            }
+            
+            const minDist = 0.55; // Body diameter boundary (solid contact size)
+            const minDistSq = minDist * minDist;
+            
+            for (const key in grid) {
+                const cellAnts = grid[key];
+                const [cx, cz] = key.split(',').map(Number);
                 
-                for (let i = 0; i < cellAnts.length; i++) {
-                    const a = cellAnts[i];
-                    const startIdx = (key === otherKey) ? i + 1 : 0;
+                const adjacentKeys = [
+                    key,
+                    `${cx + 1},${cz}`,
+                    `${cx - 1},${cz + 1}`,
+                    `${cx},${cz + 1}`,
+                    `${cx + 1},${cz + 1}`
+                ];
+                
+                for (let k = 0; k < adjacentKeys.length; k++) {
+                    const otherKey = adjacentKeys[k];
+                    const otherAnts = grid[otherKey];
+                    if (!otherAnts) continue;
                     
-                    for (let j = startIdx; j < otherAnts.length; j++) {
-                        const b = otherAnts[j];
-                        const dx = b.x - a.x;
-                        const dz = b.z - a.z;
-                        const distSq = dx * dx + dz * dz;
+                    for (let i = 0; i < cellAnts.length; i++) {
+                        const a = cellAnts[i];
+                        const startIdx = (key === otherKey) ? i + 1 : 0;
                         
-                        if (distSq < minDistSq) {
-                            const dist = Math.sqrt(distSq);
-                            const overlap = (minDist - dist) * 0.25; // Gentler push-out to prevent coordinate snapping
-                            const pushX = (dist > 0.001) ? (dx / dist) * overlap : (Math.random() - 0.5) * minDist * 0.25;
-                            const pushZ = (dist > 0.001) ? (dz / dist) * overlap : (Math.random() - 0.5) * minDist * 0.25;
+                        for (let j = startIdx; j < otherAnts.length; j++) {
+                            const b = otherAnts[j];
+                            const dx = b.x - a.x;
+                            const dz = b.z - a.z;
+                            const distSq = dx * dx + dz * dz;
                             
-                            a.x -= pushX;
-                            a.z -= pushZ;
-                            b.x += pushX;
-                            b.z += pushZ;
-                            
-                            a.y = getTerrainHeight(a.x, a.z);
-                            b.y = getTerrainHeight(b.x, b.z);
-                            
-                            // Slow steering deflection response to avoid jittering
-                            const escapeAngleA = Math.atan2(dx, dz) + Math.PI;
-                            const escapeAngleB = Math.atan2(dx, dz);
-                            a.angle = a.blendAngles(a.angle, escapeAngleA, 0.03);
-                            b.angle = b.blendAngles(b.angle, escapeAngleB, 0.03);
+                            if (distSq < minDistSq) {
+                                const dist = Math.sqrt(distSq);
+                                // Absolute solid push-out (0.5 weight for each ant)
+                                const overlap = (minDist - dist) * 0.5;
+                                const pushX = (dist > 0.001) ? (dx / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
+                                const pushZ = (dist > 0.001) ? (dz / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
+                                
+                                a.x -= pushX;
+                                a.z -= pushZ;
+                                b.x += pushX;
+                                b.z += pushZ;
+                                
+                                a.y = getTerrainHeight(a.x, a.z);
+                                b.y = getTerrainHeight(b.x, b.z);
+                                
+                                // Steer away from each other slightly to avoid lockups
+                                const escapeAngleA = Math.atan2(dx, dz) + Math.PI;
+                                const escapeAngleB = Math.atan2(dx, dz);
+                                a.angle = a.blendAngles(a.angle, escapeAngleA, 0.05);
+                                b.angle = b.blendAngles(b.angle, escapeAngleB, 0.05);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (!allColonies) {
+            // Fallback for same-colony collision resolution if global list is not provided
+            const gridCellSize = 4.0;
+            const grid = {};
+            const getGridKey = (x, z) => {
+                const cx = Math.floor(x / gridCellSize);
+                const cz = Math.floor(z / gridCellSize);
+                return `${cx},${cz}`;
+            };
+            for (let i = 0; i < this.ants.length; i++) {
+                const ant = this.ants[i];
+                if (ant.hp > 0) {
+                    const key = getGridKey(ant.x, ant.z);
+                    if (!grid[key]) grid[key] = [];
+                    grid[key].push(ant);
+                }
+            }
+            const minDist = 0.65;
+            const minDistSq = minDist * minDist;
+            for (const key in grid) {
+                const cellAnts = grid[key];
+                const [cx, cz] = key.split(',').map(Number);
+                const adjacentKeys = [key, `${cx + 1},${cz}`, `${cx - 1},${cz + 1}`, `${cx},${cz + 1}`, `${cx + 1},${cz + 1}`];
+                for (let k = 0; k < adjacentKeys.length; k++) {
+                    const otherKey = adjacentKeys[k];
+                    const otherAnts = grid[otherKey];
+                    if (!otherAnts) continue;
+                    for (let i = 0; i < cellAnts.length; i++) {
+                        const a = cellAnts[i];
+                        const startIdx = (key === otherKey) ? i + 1 : 0;
+                        for (let j = startIdx; j < otherAnts.length; j++) {
+                            const b = otherAnts[j];
+                            const dx = b.x - a.x;
+                            const dz = b.z - a.z;
+                            const distSq = dx * dx + dz * dz;
+                            if (distSq < minDistSq) {
+                                const dist = Math.sqrt(distSq);
+                                const overlap = (minDist - dist) * 0.5;
+                                const pushX = (dist > 0.001) ? (dx / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
+                                const pushZ = (dist > 0.001) ? (dz / dist) * overlap : (Math.random() - 0.5) * minDist * 0.5;
+                                a.x -= pushX;
+                                a.z -= pushZ;
+                                b.x += pushX;
+                                b.z += pushZ;
+                                a.y = getTerrainHeight(a.x, a.z);
+                                b.y = getTerrainHeight(b.x, b.z);
+                            }
                         }
                     }
                 }
@@ -840,6 +1160,13 @@ export class ColonyManager {
             
             // Respawn check
             if (ant.hp <= 0) {
+                const mode = window.combatMode || 'respawn';
+                if (mode === 'removal') {
+                    this.ants.splice(i, 1);
+                    i--;
+                    this.createAntVisuals(this.ants.length);
+                    continue;
+                }
                 ant.x = this.nestX;
                 ant.z = this.nestZ;
                 ant.y = getTerrainHeight(this.nestX, this.nestZ);
@@ -917,6 +1244,7 @@ export class ColonyManager {
                 if (distToNest < 2.5) {
                     // Deposit food!
                     this.foodCollected++;
+                    this.updateNestFoodPile(ant.x, ant.z);
                     ant.state = 'explore';
                     ant.pheromoneStrength = 1.0; // Refill deposit level
                     ant.angle += Math.PI; // Turn back out to search
@@ -998,6 +1326,16 @@ export class ColonyManager {
             ant.angle = Math.random() * Math.PI * 2;
         });
         
+        // Clear food pile group
+        if (this.foodPileGroup) {
+            while (this.foodPileGroup.children.length > 0) {
+                const child = this.foodPileGroup.children[0];
+                this.foodPileGroup.remove(child);
+                child.geometry.dispose();
+                child.material.dispose();
+            }
+        }
+        
         // Only primary colony clears visual meshes and shared arrays in-place
         if (this.colonyId === 0) {
             this.foods.forEach(f => {
@@ -1012,5 +1350,7 @@ export class ColonyManager {
         }
         
         this.foodCollected = 0;
+        this.foodPileData = [];
+        this.updateNestFoodPile();
     }
 }

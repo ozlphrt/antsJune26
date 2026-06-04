@@ -21,6 +21,9 @@ let lastTime = 0;
 let frameCount = 0;
 let fpsTimer = 0;
 let combatParticles;
+window.combatMode = 'conversion'; // Global combat scenario mode: 'respawn', 'removal', 'conversion'
+let prevColonyDefeated = []; // Track previous values to animate changes
+let initialTotalPopulation = 0; // Starting total population of all active colonies
 
 // High-performance combat particle system using points
 class CombatParticleSystem {
@@ -350,7 +353,7 @@ function spawnHealthBag(x, y, z) {
     floatingHealthBags.push({
         mesh: group,
         age: 0,
-        maxAge: 2.2, // Rises for 2.2 seconds before dissolving
+        maxAge: 0.5, // Rises for 0.5 seconds before dissolving
         speedY: 3.5  // Floats upward at 3.5 units/sec
     });
 }
@@ -474,6 +477,7 @@ function rebuildScoreboardAndLegend() {
 }
 
 function rebuildSimulation() {
+    prevColonyDefeated = [];
     // 1. Clean up old elements
     nests.forEach(nest => {
         if (nest.parent) scene.remove(nest);
@@ -579,6 +583,8 @@ function rebuildSimulation() {
     // 5. Spawn shared elements
     initialTotalFood = spawnDefaultFood();
     spawnObstacles(40);
+    
+    initialTotalPopulation = colonies.reduce((sum, c) => sum + c.ants.length, 0);
     
     // 6. UI elements
     rebuildScoreboardAndLegend();
@@ -786,6 +792,75 @@ function createNest(x, z, coreColor) {
     return nestGroup;
 }
 
+function createGraveyard(x, z) {
+    const graveGroup = new THREE.Group();
+    const yPos = getTerrainHeight(x, z);
+    
+    // 1. Dark, ruined grey/black collapsed organic mound
+    const moundGeom = new THREE.SphereGeometry(2.2, 16, 12);
+    moundGeom.scale(1.0, 0.4, 1.0); // Collapse shape
+    const moundMat = new THREE.MeshStandardMaterial({
+        color: 0x27272a, // Zinc dark charcoal
+        roughness: 0.95,
+        flatShading: true
+    });
+    const mound = new THREE.Mesh(moundGeom, moundMat);
+    mound.castShadow = true;
+    mound.receiveShadow = true;
+    graveGroup.add(mound);
+    
+    // 2. Add 2-3 weathered stone tombstones/headstones
+    const tsCount = 2 + Math.floor(Math.random() * 2);
+    const tsGeom = new THREE.BoxGeometry(0.35, 0.65, 0.12);
+    tsGeom.translate(0, 0.325, 0); // Offset pivot
+    
+    const tsMat = new THREE.MeshStandardMaterial({
+        color: 0x52525b, // Zinc weathered grey
+        roughness: 0.9,
+        flatShading: true
+    });
+    
+    for (let i = 0; i < tsCount; i++) {
+        const ts = new THREE.Mesh(tsGeom, tsMat);
+        ts.castShadow = true;
+        
+        const angle = (i * Math.PI * 2) / tsCount + (Math.random() - 0.5) * 0.4;
+        const radius = 0.5 + Math.random() * 0.7;
+        const tx = Math.cos(angle) * radius;
+        const tz = Math.sin(angle) * radius;
+        const ty = 0.05 + Math.random() * 0.15;
+        
+        ts.position.set(tx, ty, tz);
+        ts.rotation.x = (Math.random() - 0.5) * 0.3;
+        ts.rotation.z = (Math.random() - 0.5) * 0.3;
+        ts.rotation.y = Math.random() * Math.PI * 2;
+        
+        const scale = 0.8 + Math.random() * 0.4;
+        ts.scale.set(scale, scale, scale);
+        
+        graveGroup.add(ts);
+    }
+    
+    // 3. Rubble stone chunks
+    const chunkGeom = new THREE.DodecahedronGeometry(0.16, 0);
+    for (let i = 0; i < 4; i++) {
+        const chunk = new THREE.Mesh(chunkGeom, tsMat);
+        chunk.position.set(
+            (Math.random() - 0.5) * 2.2,
+            0.05,
+            (Math.random() - 0.5) * 2.2
+        );
+        chunk.rotation.set(Math.random(), Math.random(), Math.random());
+        graveGroup.add(chunk);
+    }
+    
+    // Explicitly initialize empty userData to avoid animation loop type-errors
+    graveGroup.userData = {};
+    graveGroup.position.set(x, yPos, z);
+    
+    return graveGroup;
+}
+
 function init() {
     const container = document.getElementById('canvas-container');
     
@@ -846,6 +921,7 @@ function init() {
     scene.add(highlightRing);
     
     let audioCtx = null;
+    let audioEnabled = false; // Muted by default to ensure browser compliance and clean start
     let lastDefeatSoundTime = 0;
     
     function initAudio() {
@@ -858,64 +934,58 @@ function init() {
     }
 
     window.playDefeatSound = () => {
+        if (!audioEnabled) return;
         const now = Date.now();
-        if (now - lastDefeatSoundTime < 450) return;
+        if (now - lastDefeatSoundTime < 600) return; // Prevent rapid noisy overlapping
         lastDefeatSoundTime = now;
         
         try {
             initAudio();
-            if (!audioCtx) return;
+            if (!audioCtx || audioCtx.state === 'suspended') return;
+            
+            // Soft wood-like pop/crunch pluck
             const osc = audioCtx.createOscillator();
-            const filter = audioCtx.createBiquadFilter();
-            const gain = audioCtx.createGain();
+            const gainNode = audioCtx.createGain();
             
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(80, audioCtx.currentTime);
-            osc.frequency.linearRampToValueAtTime(40, audioCtx.currentTime + 0.25);
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(140, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
             
-            filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(100, audioCtx.currentTime);
-            filter.frequency.linearRampToValueAtTime(50, audioCtx.currentTime + 0.25);
+            gainNode.gain.setValueAtTime(0.0, audioCtx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.15);
             
-            gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
-            gain.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + 0.04); 
-            gain.gain.linearRampToValueAtTime(0.0, audioCtx.currentTime + 0.25);
-            
-            osc.connect(filter);
-            filter.connect(gain);
-            gain.connect(audioCtx.destination);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
             
             osc.start();
-            osc.stop(audioCtx.currentTime + 0.26);
+            osc.stop(audioCtx.currentTime + 0.16);
         } catch(e) {}
     };
 
     window.playKickSound = () => {
+        if (!audioEnabled) return;
         try {
             initAudio();
-            if (!audioCtx) return;
+            if (!audioCtx || audioCtx.state === 'suspended') return;
+            
+            // Pleasant, soft organic chime/plop
             const osc = audioCtx.createOscillator();
-            const filter = audioCtx.createBiquadFilter();
-            const gain = audioCtx.createGain();
+            const gainNode = audioCtx.createGain();
             
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(120, audioCtx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.1);
+            osc.frequency.setValueAtTime(320, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.12);
             
-            filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(150, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.0, audioCtx.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0.04, audioCtx.currentTime + 0.01);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12);
             
-            // Soft envelope: 10ms attack, 90ms decay for a subtle thuddy kick
-            gain.gain.setValueAtTime(0.0, audioCtx.currentTime);
-            gain.gain.linearRampToValueAtTime(0.12, audioCtx.currentTime + 0.01);
-            gain.gain.linearRampToValueAtTime(0.0, audioCtx.currentTime + 0.1);
-            
-            osc.connect(filter);
-            filter.connect(gain);
-            gain.connect(audioCtx.destination);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
             
             osc.start();
-            osc.stop(audioCtx.currentTime + 0.11);
+            osc.stop(audioCtx.currentTime + 0.13);
         } catch(e) {}
     };
 
@@ -1080,6 +1150,13 @@ function setupUI() {
     const panelColonyEdit = document.getElementById('panel-colony-edit');
     const btnAntPill = document.getElementById('btn-ant-pill');
     const panelAntEdit = document.getElementById('panel-ant-edit');
+    const btnCombatPill = document.getElementById('btn-combat-pill');
+    const panelCombatEdit = document.getElementById('panel-combat-edit');
+    const pillCombatMode = document.getElementById('pill-combat-mode');
+    const btnRestartPill = document.getElementById('btn-restart-pill');
+    const btnAudioPill = document.getElementById('btn-audio-pill');
+    const pillAudioIcon = document.getElementById('pill-audio-icon');
+    const pillAudioText = document.getElementById('pill-audio-text');
     
     btnCamera.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1087,6 +1164,7 @@ function setupUI() {
         dashboard.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
     });
     
     btnSettings.addEventListener('click', (e) => {
@@ -1095,6 +1173,7 @@ function setupUI() {
         cameraMenu.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
     });
 
     btnColonyPill.addEventListener('click', (e) => {
@@ -1103,6 +1182,7 @@ function setupUI() {
         dashboard.classList.add('hidden');
         cameraMenu.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
     });
 
     btnAntPill.addEventListener('click', (e) => {
@@ -1111,15 +1191,60 @@ function setupUI() {
         dashboard.classList.add('hidden');
         cameraMenu.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
+    });
+
+    btnCombatPill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        panelCombatEdit.classList.toggle('hidden');
+        dashboard.classList.add('hidden');
+        cameraMenu.classList.add('hidden');
+        panelColonyEdit.classList.add('hidden');
+        panelAntEdit.classList.add('hidden');
+    });
+
+    btnRestartPill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        rebuildSimulation();
+        // Close menus
+        cameraMenu.classList.add('hidden');
+        panelColonyEdit.classList.add('hidden');
+        panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
+        dashboard.classList.add('hidden');
+    });
+
+    btnAudioPill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        initAudio();
+        audioEnabled = !audioEnabled;
+        if (audioEnabled) {
+            pillAudioIcon.innerText = '🔊';
+            pillAudioText.innerText = 'Sound On';
+            btnAudioPill.style.backgroundColor = 'rgba(16, 185, 129, 0.15)'; // subtle green highlight
+            window.playKickSound(); // pleasant startup chime
+        } else {
+            pillAudioIcon.innerText = '🔇';
+            pillAudioText.innerText = 'Muted';
+            btnAudioPill.style.backgroundColor = '';
+        }
+        // Close other panels
+        cameraMenu.classList.add('hidden');
+        panelColonyEdit.classList.add('hidden');
+        panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
+        dashboard.classList.add('hidden');
     });
 
     panelColonyEdit.addEventListener('click', (e) => e.stopPropagation());
     panelAntEdit.addEventListener('click', (e) => e.stopPropagation());
+    panelCombatEdit.addEventListener('click', (e) => e.stopPropagation());
     
     window.addEventListener('click', () => {
         cameraMenu.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
+        panelCombatEdit.classList.add('hidden');
     });
     
     document.querySelectorAll('.preset-option-btn').forEach(btn => {
@@ -1128,6 +1253,21 @@ function setupUI() {
             const preset = btn.getAttribute('data-preset');
             applyCameraPreset(preset);
             cameraMenu.classList.add('hidden');
+        });
+    });
+
+    document.querySelectorAll('.combat-option-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.combat-option-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            const mode = btn.getAttribute('data-mode');
+            window.combatMode = mode;
+            
+            // Capitalize first letter for pill display
+            pillCombatMode.innerText = mode.charAt(0).toUpperCase() + mode.slice(1);
+            panelCombatEdit.classList.add('hidden');
         });
     });
 };
@@ -1185,6 +1325,33 @@ function animate(time) {
         if (pheromoneGrids[i] && colonies[i]) {
             pheromoneGrids[i].update();
             colonies[i].update(pheromoneGrids[i], WORLD_SIZE, colonies);
+            
+            // Check for colony defeat (graveyard conversion when population falls to 0)
+            if (colonies[i].ants.length === 0 && !colonies[i].isGraveyard && initialTotalPopulation > 0) {
+                colonies[i].isGraveyard = true;
+                const nest = nests[i];
+                if (nest) {
+                    scene.remove(nest);
+                    nest.children.forEach(child => {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) child.material.dispose();
+                    });
+                    
+                    // Remove the food pile from the scene and dispose of resources
+                    if (colonies[i].foodPileGroup) {
+                        scene.remove(colonies[i].foodPileGroup);
+                        colonies[i].foodPileGroup.children.forEach(child => {
+                            child.geometry.dispose();
+                            child.material.dispose();
+                        });
+                        colonies[i].foodPileGroup = null;
+                    }
+                    
+                    const grave = createGraveyard(colonies[i].nestX, colonies[i].nestZ);
+                    scene.add(grave);
+                    nests[i] = grave;
+                }
+            }
         }
     }
     
@@ -1196,20 +1363,22 @@ function animate(time) {
     // 2. Nest Animations (organic breathing pulse of bioluminescent pool and mushrooms)
     nests.forEach((nest) => {
         const pulse = 3.0 + Math.sin(time * 0.003) * 1.5;
-        if (nest.userData.light) {
-            nest.userData.light.intensity = pulse;
-        }
-        if (nest.userData.pool && nest.userData.pool.material) {
-            nest.userData.pool.material.emissiveIntensity = pulse;
-        }
-        if (nest.userData.mushroomCaps) {
-            nest.userData.mushroomCaps.forEach((cap) => {
-                if (cap.material) {
-                    // Pulsate cap light with a slight offset phase based on its 3D position
-                    const offset = cap.position.x * 2.0 + cap.position.z * 2.0;
-                    cap.material.emissiveIntensity = 2.5 + Math.sin(time * 0.004 + offset) * 1.5;
-                }
-            });
+        if (nest.userData) {
+            if (nest.userData.light) {
+                nest.userData.light.intensity = pulse;
+            }
+            if (nest.userData.pool && nest.userData.pool.material) {
+                nest.userData.pool.material.emissiveIntensity = pulse;
+            }
+            if (nest.userData.mushroomCaps) {
+                nest.userData.mushroomCaps.forEach((cap) => {
+                    if (cap.material) {
+                        // Pulsate cap light with a slight offset phase based on its 3D position
+                        const offset = cap.position.x * 2.0 + cap.position.z * 2.0;
+                        cap.material.emissiveIntensity = 2.5 + Math.sin(time * 0.004 + offset) * 1.5;
+                    }
+                });
+            }
         }
     });
     
@@ -1405,30 +1574,56 @@ function animate(time) {
     // 4. Update HUD Statistics scoreboard dynamically
     let totalCollected = 0;
     const colonyFood = [];
-    const colonyDefeated = [];
-    let totalDefeated = 0;
+    const colonyScoreValue = [];
+    let totalScoreValue = 0;
+    
+    const showDefeatedMode = (window.combatMode === 'respawn');
+    const scoreTitleElem = document.getElementById('scoreboard-title-defeated');
+    if (scoreTitleElem) {
+        scoreTitleElem.innerText = showDefeatedMode ? "Defeated" : "Population";
+    }
     
     for (let i = 0; i < activeColonyCount; i++) {
         const collected = colonies[i] ? colonies[i].foodCollected : 0;
-        const defeated = colonies[i] ? colonies[i].antsDefeated : 0;
         colonyFood.push(collected);
-        colonyDefeated.push(defeated);
         totalCollected += collected;
-        totalDefeated += defeated;
+        
+        let scoreVal = 0;
+        if (colonies[i]) {
+            scoreVal = showDefeatedMode ? colonies[i].antsDefeated : colonies[i].ants.length;
+        }
+        colonyScoreValue.push(scoreVal);
+        totalScoreValue += scoreVal;
     }
     
-    // Defeated segments update
+    // Scoreboard top row segments update
+    const containerDefeated = document.getElementById('container-defeated');
+    if (containerDefeated) {
+        containerDefeated.style.width = '100%';
+    }
+    
     for (let i = 0; i < activeColonyCount; i++) {
-        let defPct = 100 / activeColonyCount;
-        if (totalDefeated > 0) {
-            defPct = (colonyDefeated[i] / totalDefeated) * 100;
+        let scorePct = 100 / activeColonyCount;
+        if (totalScoreValue > 0) {
+            scorePct = (colonyScoreValue[i] / totalScoreValue) * 100;
         }
         const barSeg = document.getElementById(`bar-defeated-${i}`);
         const labelText = document.getElementById(`defeated-text-${i}`);
+        
+        const prevVal = prevColonyDefeated[i];
+        const newVal = colonyScoreValue[i];
+        
         if (barSeg && labelText) {
-            barSeg.style.width = defPct + '%';
-            labelText.innerText = defPct > 6 ? colonyDefeated[i] : "";
+            barSeg.style.width = scorePct + '%';
+            labelText.innerText = scorePct > 4 ? colonyScoreValue[i] : "";
+            
+            if (prevVal !== undefined && newVal !== prevVal) {
+                labelText.classList.remove('label-flash');
+                void labelText.offsetWidth; // Trigger reflow to restart animation
+                labelText.classList.add('label-flash');
+            }
         }
+        prevColonyDefeated[i] = newVal;
     }
     
     // Food segments update

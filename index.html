@@ -52,6 +52,29 @@
         <input type="range" id="popup-colony-count" min="2" max="6" step="1" value="3">
     </div>
 
+    <button id="btn-combat-pill" class="pill-btn combat-pill-pos">
+        <span class="pill-icon">⚔️</span>
+        <span id="pill-combat-mode" class="pill-value" style="font-size: 0.65rem;">Conversion</span>
+    </button>
+    <div id="panel-combat-edit" class="edit-popup-panel panel hidden" style="bottom: 220px; width: 180px;">
+        <div class="combat-mode-options flex-col" style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 0.72rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Combat Scenario</label>
+            <button class="combat-option-btn" data-mode="respawn">🔄 Respawn</button>
+            <button class="combat-option-btn" data-mode="removal">💀 Removal</button>
+            <button class="combat-option-btn active" data-mode="conversion">🧬 Conversion</button>
+        </div>
+    </div>
+
+    <button id="btn-restart-pill" class="pill-btn restart-pill-pos">
+        <span class="pill-icon">🔄</span>
+        <span class="pill-value" style="font-size: 0.65rem;">Restart</span>
+    </button>
+
+    <button id="btn-audio-pill" class="pill-btn audio-pill-pos">
+        <span id="pill-audio-icon" class="pill-icon">🔇</span>
+        <span id="pill-audio-text" class="pill-value" style="font-size: 0.65rem;">Muted</span>
+    </button>
+
     <!-- Settings Icon Button to toggle Dashboard panel visibility -->
     <button id="btn-settings-toggle" class="settings-toggle-btn">⚙️ Set</button>
 
@@ -59,7 +82,7 @@
     <div class="top-scoreboard panel flex-col">
         <!-- Defeated Row -->
         <div class="scoreboard-row">
-            <span class="scoreboard-title">Defeated</span>
+            <span id="scoreboard-title-defeated" class="scoreboard-title">Defeated</span>
             <div id="container-defeated" class="stacked-bar-container"></div>
         </div>
 

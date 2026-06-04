@@ -38,12 +38,22 @@ export function getTerrainHeight(x, z) {
         const dx = x - nest.x;
         const dz = z - nest.z;
         const dist = Math.sqrt(dx*dx + dz*dz);
-        const nestFlattenRadius = 12.0;
+        const nestFlattenRadius = 6.0; // Smooth transition radius
         if (dist < nestFlattenRadius) {
+            // Compute the natural unflattened height at the nest center
+            const nrx = nest.x + terrainOffsetX;
+            const nrz = nest.z + terrainOffsetZ;
+            const nh1 = Math.sin(nrx * 0.02) * Math.cos(nrz * 0.02) * 8.0;
+            const nh2 = Math.sin(nrx * 0.07 + 2.0) * Math.cos(nrz * 0.06 - 1.0) * 2.5;
+            const nh3 = Math.sin(nrx * 0.2) * Math.cos(nrz * 0.18) * 0.6;
+            const nestNaturalHeight = nh1 + nh2 + nh3;
+            
             const t = dist / nestFlattenRadius;
             // Smoothstep interpolation to flatten smoothly
             const smoothFactor = t * t * (3 - 2 * t);
-            height = height * smoothFactor;
+            
+            // Blend from nest natural height (flat base) to surrounding natural height
+            height = nestNaturalHeight * (1.0 - smoothFactor) + height * smoothFactor;
         }
     });
     
