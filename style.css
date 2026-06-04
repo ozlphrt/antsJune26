@@ -1469,6 +1469,19 @@ button {
     color: var(--text-secondary) !important;
     white-space: nowrap;
 }
+.km-corner-label {
+    text-align: center !important;
+    font-size: 0.65rem !important;
+    font-weight: 800 !important;
+    color: #111111 !important;
+    line-height: 1.3 !important;
+    padding: 4px !important;
+}
+.km-corner-label span {
+    font-weight: 800 !important;
+    color: #111111 !important;
+}
+
 
 /* ── K/D Performance bars (Combat tab) ── */
 .kd-colony-row {

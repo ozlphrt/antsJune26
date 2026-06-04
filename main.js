@@ -3021,7 +3021,7 @@ function renderIntelDashboard() {
           </div>
           <table class="km-table">
             <tr>
-              <th class="km-attacker-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
+              <th class="km-corner-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
                 Attacker <span style="font-weight:700;color:#52525b;">(Row)</span><br>
                 <span style="font-size:0.5rem;color:#71717a;font-weight:600;">vs</span><br>
                 Victim <span style="font-weight:700;color:#52525b;">(Col)</span>
@@ -3064,7 +3064,7 @@ function renderIntelDashboard() {
           </div>
           <table class="km-table">
             <tr>
-              <th class="km-attacker-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
+              <th class="km-corner-label" style="font-size:0.55rem;color:#18181b;line-height:1.2;text-align:center;padding:4px;font-weight:700;">
                 Stance Owner <span style="font-weight:700;color:#52525b;">(Row)</span><br>
                 <span style="font-size:0.5rem;color:#71717a;font-weight:600;">towards</span><br>
                 Target <span style="font-weight:700;color:#52525b;">(Col)</span>
