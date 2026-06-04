@@ -34,12 +34,12 @@
         <button class="preset-option-btn" data-preset="ant">🐜 Follow Leader</button>
     </div>
 
-    <!-- Interactive Status Pills (Bottom Right, above camera) -->
+    <!-- Interactive Status Pills (Bottom Right) -->
     <button id="btn-ant-pill" class="pill-btn ant-pill-pos">
         <span class="pill-icon">🐜</span>
         <span id="pill-ant-count" class="pill-value">0</span>
     </button>
-    <div id="panel-ant-edit" class="edit-popup-panel panel hidden" style="bottom: 120px;">
+    <div id="panel-ant-edit" class="edit-popup-panel panel hidden" style="bottom: 60px;">
         <div class="slider-header">
             <label for="popup-ant-count">Ants / Colony</label>
             <span id="val-popup-ant-count">250</span>
@@ -51,7 +51,7 @@
         <span class="pill-icon">🏰</span>
         <span id="pill-colony-count" class="pill-value">3</span>
     </button>
-    <div id="panel-colony-edit" class="edit-popup-panel panel hidden" style="bottom: 170px;">
+    <div id="panel-colony-edit" class="edit-popup-panel panel hidden" style="bottom: 100px;">
         <div class="slider-header">
             <label for="popup-colony-count">Colonies</label>
             <span id="val-popup-colony-count">3</span>
@@ -63,7 +63,7 @@
         <span class="pill-icon">⚔️</span>
         <span id="pill-combat-mode" class="pill-value" style="font-size: 0.65rem;">Removal</span>
     </button>
-    <div id="panel-combat-edit" class="edit-popup-panel panel hidden" style="bottom: 220px; width: 180px;">
+    <div id="panel-combat-edit" class="edit-popup-panel panel hidden" style="bottom: 140px; width: 180px;">
         <div class="combat-mode-options flex-col" style="display: flex; flex-direction: column; gap: 4px;">
             <label style="font-size: 0.72rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Combat Scenario</label>
             <button class="combat-option-btn" data-mode="respawn">🔄 Respawn</button>
@@ -71,19 +71,6 @@
             <button class="combat-option-btn" data-mode="conversion">🧬 Conversion</button>
         </div>
     </div>
-
-    <button id="btn-restart-pill" class="pill-btn restart-pill-pos">
-        <span class="pill-icon">🔄</span>
-        <span class="pill-value" style="font-size: 0.65rem;">Restart</span>
-    </button>
-
-    <button id="btn-audio-pill" class="pill-btn audio-pill-pos">
-        <span id="pill-audio-icon" class="pill-icon">🔇</span>
-        <span id="pill-audio-text" class="pill-value" style="font-size: 0.65rem;">Muted</span>
-    </button>
-
-    <!-- Settings Icon Button to toggle Dashboard panel visibility -->
-    <button id="btn-settings-toggle" class="settings-toggle-btn">⚙️ Set</button>
 
     <!-- Invisible hover trigger area for unpinned stats panel on the left edge -->
     <div id="intel-hover-trigger" class="intel-hover-trigger"></div>
@@ -285,6 +272,21 @@
         <section class="panel instructions-panel">
             <p><strong>Controls:</strong> Left Click + Drag to rotate. Right Click + Drag to pan. Scroll to zoom. Click "Add Food Cluster" then click on the terrain to spawn food!</p>
         </section>
+    </div>
+
+    <!-- Beautiful Guided Setup Wizard / Welcome Screen -->
+    <div id="wizard-overlay" class="wizard-overlay"></div>
+    <div id="wizard-modal" class="wizard-modal">
+        <h2 style="margin: 0; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 8px;">⚔️ Ant Colony Simulator</h2>
+        <div id="wizard-content" style="font-size: 0.72rem; line-height: 1.45; color: var(--text-secondary);">
+            <p>Welcome! Configure your ant colonies, set up their combat scenarios, and design strategic alliances to observe how natural selection and game theory play out.</p>
+            <p style="font-weight: 700; margin-top: 8px; color: #18181b;">How would you like to start?</p>
+        </div>
+        <div id="wizard-buttons" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+            <button id="btn-wizard-guide" class="btn-primary" style="font-weight: 700; font-size: 0.72rem; padding: 10px; width: 100%; border-radius: 6px;">📋 a) Guide Me: Step-by-Step Setup</button>
+            <button id="btn-wizard-default" class="btn-primary" style="font-weight: 700; font-size: 0.72rem; padding: 10px; width: 100%; border-radius: 6px; background: #27272a; border-color: #27272a;">🐜 b) Play Default Setup (3 Colonies, 250 Ants)</button>
+            <button id="btn-wizard-surprise" class="btn-primary" style="font-weight: 700; font-size: 0.72rem; padding: 10px; width: 100%; border-radius: 6px; background: #eab308; border-color: #eab308;">🧬 c) Surprise Me! (Random configuration)</button>
+        </div>
     </div>
 
     <!-- Modules Script -->

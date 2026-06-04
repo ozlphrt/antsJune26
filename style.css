@@ -74,41 +74,43 @@ body {
     position: absolute;
     right: 20px;
     z-index: 20;
-    min-width: 96px; /* Uniform width */
-    width: 96px; /* Uniform width */
+    min-width: 100px;
+    width: 100px;
     box-sizing: border-box;
-    height: 38px; /* Uniform height */
-    border-radius: 19px; /* Pill/capsule shape */
-    background: var(--panel-bg);
-    border: 2px solid var(--text-primary); /* Strong outline for maximum visibility */
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08); /* Heavy visual shadow */
+    height: 34px;
+    border-radius: 17px;
+    background: rgba(255, 255, 255, 0.75) !important;
+    backdrop-filter: blur(12px) saturate(130%) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(130%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 6px;
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 0.78rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    color: var(--text-primary);
+    color: #18181b;
     cursor: pointer;
     transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background-color 0.2s ease, box-shadow 0.2s ease;
     outline: none;
-    padding: 0 8px;
+    padding: 0 10px;
 }
 
 .settings-toggle-btn { bottom: 20px; }
-.camera-preset-btn { bottom: 70px; }
+.camera-preset-btn { bottom: 20px; }
 
 .settings-toggle-btn:hover, .camera-preset-btn:hover, .pill-btn:hover, .intel-toggle-btn:hover {
-    transform: scale(1.08);
-    background-color: #ffffff;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+    transform: scale(1.06);
+    background-color: #ffffff !important;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15) !important;
 }
 
 .camera-preset-panel {
     position: absolute;
-    bottom: 70px;
-    right: 90px;
+    bottom: 20px;
+    right: 130px;
     z-index: 20;
     width: 140px;
     gap: 4px;
@@ -157,44 +159,30 @@ body {
     transform: scale(0.94);
 }
 
-.restart-pill-pos {
-    position: absolute;
-    bottom: 270px;
-    right: 20px;
-    z-index: 20;
-}
-
-.audio-pill-pos {
-    position: absolute;
-    bottom: 320px;
-    right: 20px;
-    z-index: 20;
-}
-
 .combat-pill-pos {
     position: absolute;
-    bottom: 220px;
+    bottom: 140px;
     right: 20px;
     z-index: 20;
 }
 
 .col-pill-pos {
     position: absolute;
-    bottom: 170px;
+    bottom: 100px;
     right: 20px;
     z-index: 20;
 }
 
 .ant-pill-pos {
     position: absolute;
-    bottom: 120px;
+    bottom: 60px;
     right: 20px;
     z-index: 20;
 }
 
 .edit-popup-panel {
     position: absolute;
-    right: 90px;
+    right: 130px;
     z-index: 20;
     width: 200px;
     display: flex;
@@ -1670,6 +1658,59 @@ button {
     opacity: 0;
     transition: opacity 0.15s ease;
     line-height: 1.35;
+}
+
+/* ── Guided Setup Wizard Modals ── */
+.wizard-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(24, 24, 27, 0.28);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 1999;
+    transition: opacity 0.3s ease;
+}
+.wizard-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 380px;
+    max-width: 90%;
+    background: rgba(255, 255, 255, 0.88) !important;
+    backdrop-filter: blur(24px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(140%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.16) !important;
+    border-radius: 20px !important;
+    padding: 22px !important;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    font-family: 'Space Grotesk', sans-serif;
+    color: #18181b;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.step-choice-btn {
+    background: rgba(255, 255, 255, 0.4);
+    border: 1.5px solid rgba(24, 24, 27, 0.1) !important;
+    color: #27272a;
+    font-family: 'Space Grotesk', sans-serif;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.step-choice-btn:hover {
+    border-color: rgba(24, 24, 27, 0.35) !important;
+    background: rgba(255, 255, 255, 0.7);
+}
+.step-choice-btn.active {
+    background: #18181b !important;
+    border-color: #18181b !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 12px rgba(24, 24, 27, 0.2);
 }
 
 

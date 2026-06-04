@@ -383,6 +383,13 @@ function disposeColonies() {
             col.foodCarriedMesh.geometry.dispose();
             col.foodCarriedMesh.material.dispose();
         }
+        if (col.foodPileGroup) {
+            scene.remove(col.foodPileGroup);
+            col.foodPileGroup.children.forEach(child => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+            });
+        }
         col.foods.forEach(food => {
             if (food.mesh) {
                 scene.remove(food.mesh);
@@ -1488,33 +1495,31 @@ function setupUI() {
     const btnCombatPill = document.getElementById('btn-combat-pill');
     const panelCombatEdit = document.getElementById('panel-combat-edit');
     const pillCombatMode = document.getElementById('pill-combat-mode');
-    const btnRestartPill = document.getElementById('btn-restart-pill');
-    const btnAudioPill = document.getElementById('btn-audio-pill');
-    const pillAudioIcon = document.getElementById('pill-audio-icon');
-    const pillAudioText = document.getElementById('pill-audio-text');
     
     btnCamera.addEventListener('click', (e) => {
         e.stopPropagation();
         cameraMenu.classList.toggle('hidden');
-        dashboard.classList.add('hidden');
+        if (dashboard) dashboard.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
         panelCombatEdit.classList.add('hidden');
     });
     
-    btnSettings.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dashboard.classList.toggle('hidden');
-        cameraMenu.classList.add('hidden');
-        panelColonyEdit.classList.add('hidden');
-        panelAntEdit.classList.add('hidden');
-        panelCombatEdit.classList.add('hidden');
-    });
+    if (btnSettings && dashboard) {
+        btnSettings.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dashboard.classList.toggle('hidden');
+            cameraMenu.classList.add('hidden');
+            panelColonyEdit.classList.add('hidden');
+            panelAntEdit.classList.add('hidden');
+            panelCombatEdit.classList.add('hidden');
+        });
+    }
 
     btnColonyPill.addEventListener('click', (e) => {
         e.stopPropagation();
         panelColonyEdit.classList.toggle('hidden');
-        dashboard.classList.add('hidden');
+        if (dashboard) dashboard.classList.add('hidden');
         cameraMenu.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
         panelCombatEdit.classList.add('hidden');
@@ -1523,7 +1528,7 @@ function setupUI() {
     btnAntPill.addEventListener('click', (e) => {
         e.stopPropagation();
         panelAntEdit.classList.toggle('hidden');
-        dashboard.classList.add('hidden');
+        if (dashboard) dashboard.classList.add('hidden');
         cameraMenu.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
         panelCombatEdit.classList.add('hidden');
@@ -1532,7 +1537,7 @@ function setupUI() {
     btnCombatPill.addEventListener('click', (e) => {
         e.stopPropagation();
         panelCombatEdit.classList.toggle('hidden');
-        dashboard.classList.add('hidden');
+        if (dashboard) dashboard.classList.add('hidden');
         cameraMenu.classList.add('hidden');
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
@@ -1599,39 +1604,6 @@ function setupUI() {
     // Prevent propagation inside panel clicks
     intelPanel.addEventListener('click', (e) => e.stopPropagation());
 
-    btnRestartPill.addEventListener('click', (e) => {
-        e.stopPropagation();
-        rebuildSimulation();
-        // Close menus
-        cameraMenu.classList.add('hidden');
-        panelColonyEdit.classList.add('hidden');
-        panelAntEdit.classList.add('hidden');
-        panelCombatEdit.classList.add('hidden');
-        dashboard.classList.add('hidden');
-    });
-
-    btnAudioPill.addEventListener('click', (e) => {
-        e.stopPropagation();
-        initAudio();
-        audioEnabled = !audioEnabled;
-        if (audioEnabled) {
-            pillAudioIcon.innerText = '🔊';
-            pillAudioText.innerText = 'Sound On';
-            btnAudioPill.style.backgroundColor = 'rgba(16, 185, 129, 0.15)'; // subtle green highlight
-            window.playKickSound(); // pleasant startup chime
-        } else {
-            pillAudioIcon.innerText = '🔇';
-            pillAudioText.innerText = 'Muted';
-            btnAudioPill.style.backgroundColor = '';
-        }
-        // Close other panels
-        cameraMenu.classList.add('hidden');
-        panelColonyEdit.classList.add('hidden');
-        panelAntEdit.classList.add('hidden');
-        panelCombatEdit.classList.add('hidden');
-        dashboard.classList.add('hidden');
-    });
-
     panelColonyEdit.addEventListener('click', (e) => e.stopPropagation());
     panelAntEdit.addEventListener('click', (e) => e.stopPropagation());
     panelCombatEdit.addEventListener('click', (e) => e.stopPropagation());
@@ -1675,6 +1647,245 @@ function setupUI() {
             document.getElementById('nest-stats-card').classList.add('hidden');
         });
     }
+
+    function setCombatMode(mode) {
+        window.combatMode = mode;
+        const pillCombatMode = document.getElementById('pill-combat-mode');
+        if (pillCombatMode) {
+            pillCombatMode.innerText = mode.charAt(0).toUpperCase() + mode.slice(1);
+        }
+        document.querySelectorAll('.combat-option-btn').forEach(btn => {
+            if (btn.getAttribute('data-mode') === mode) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    }
+
+    function initSetupWizard() {
+        const overlay = document.getElementById('wizard-overlay');
+        const modal = document.getElementById('wizard-modal');
+        if (!overlay || !modal) return;
+
+        let step = 0;
+        let chosenColonies = 3;
+        let chosenAnts = 250;
+        let chosenCombat = 'removal';
+
+        const btnGuide = document.getElementById('btn-wizard-guide');
+        const btnDefault = document.getElementById('btn-wizard-default');
+        const btnSurprise = document.getElementById('btn-wizard-surprise');
+
+        if (btnDefault) {
+            btnDefault.addEventListener('click', () => {
+                closeWizard();
+                updateColonyCount(3);
+                updateAntCount(250);
+                setCombatMode('removal');
+                rebuildSimulation();
+            });
+        }
+
+        if (btnSurprise) {
+            btnSurprise.addEventListener('click', () => {
+                closeWizard();
+                
+                // Keep random configurations in the "sweet spot"
+                const countRand = Math.random();
+                const cols = countRand < 0.15 ? 2 : countRand < 0.85 ? 3 : 4;
+                
+                const pop = Math.floor(200 + Math.random() * 100); // 200 to 300 ants
+                
+                const combRand = Math.random();
+                const combat = combRand < 0.8 ? 'removal' : (combRand < 0.9 ? 'conversion' : 'respawn');
+                
+                updateColonyCount(cols);
+                updateAntCount(pop);
+                setCombatMode(combat);
+
+                const persOptions = ['dove', 'hawk', 'grudger', 'bully'];
+                for (let i = 0; i < cols; i++) {
+                    colonySetupStrategies[i] = {
+                        personality: persOptions[Math.floor(Math.random() * persOptions.length)],
+                        stances: {}
+                    };
+                }
+                for (let i = 0; i < cols; i++) {
+                    for (let j = 0; j < cols; j++) {
+                        if (i === j) continue;
+                        const p = colonySetupStrategies[i].personality;
+                        if (p === 'hawk') {
+                            colonySetupStrategies[i].stances[j] = 'Hostile';
+                        } else if (p === 'dove') {
+                            colonySetupStrategies[i].stances[j] = Math.random() > 0.4 ? 'Allied' : 'Neutral';
+                        } else if (p === 'grudger') {
+                            colonySetupStrategies[i].stances[j] = Math.random() > 0.5 ? 'Allied' : 'Neutral';
+                        } else { // bully
+                            colonySetupStrategies[i].stances[j] = Math.random() > 0.5 ? 'Hostile' : 'Neutral';
+                        }
+                    }
+                }
+
+                rebuildSimulation();
+                renderColonySetupPanel();
+            });
+        }
+
+        if (btnGuide) {
+            btnGuide.addEventListener('click', () => {
+                step = 1;
+                renderWizardStep();
+            });
+        }
+
+        function renderWizardStep() {
+            const content = document.getElementById('wizard-content');
+            const buttons = document.getElementById('wizard-buttons');
+            if (!content || !buttons) return;
+
+            if (step === 1) {
+                content.innerHTML = `
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 1: Choose Number of Colonies</h3>
+                    <p>How many ant colonies would you like to have compete on the battlefield? (Recommended: 3)</p>
+                    <div style="display:flex; gap:6px; margin: 12px 0;">
+                        <button class="step-choice-btn ${chosenColonies === 2 ? 'active' : ''}" data-val="2" style="flex:1; padding: 8px; font-weight:700; border-radius:6px; cursor:pointer;">2</button>
+                        <button class="step-choice-btn ${chosenColonies === 3 ? 'active' : ''}" data-val="3" style="flex:1; padding: 8px; font-weight:700; border-radius:6px; cursor:pointer;">3</button>
+                        <button class="step-choice-btn ${chosenColonies === 4 ? 'active' : ''}" data-val="4" style="flex:1; padding: 8px; font-weight:700; border-radius:6px; cursor:pointer;">4</button>
+                    </div>
+                `;
+                buttons.innerHTML = `
+                    <button id="btn-step-next" class="btn-primary" style="font-weight:700; font-size:0.75rem; padding:10px; width:100%; border-radius:6px;">Next ➔</button>
+                `;
+
+                content.querySelectorAll('.step-choice-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        content.querySelectorAll('.step-choice-btn').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        chosenColonies = parseInt(btn.getAttribute('data-val'));
+                    });
+                });
+
+                document.getElementById('btn-step-next').addEventListener('click', () => {
+                    step = 2;
+                    renderWizardStep();
+                });
+
+            } else if (step === 2) {
+                content.innerHTML = `
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 2: Choose Population Limit</h3>
+                    <p>Choose the starting population of ants per colony. (Recommended: 250)</p>
+                    <div style="display:flex; gap:6px; margin: 12px 0;">
+                        <button class="step-choice-btn ${chosenAnts === 100 ? 'active' : ''}" data-val="100" style="flex:1; padding: 8px; font-weight:700; border-radius:6px; cursor:pointer;">100</button>
+                        <button class="step-choice-btn ${chosenAnts === 250 ? 'active' : ''}" data-val="250" style="flex:1; padding: 8px; font-weight:700; border-radius:6px; cursor:pointer;">250</button>
+                        <button class="step-choice-btn ${chosenAnts === 500 ? 'active' : ''}" data-val="500" style="flex:1; padding: 8px; font-weight:700; border-radius:6px; cursor:pointer;">500</button>
+                    </div>
+                `;
+                buttons.innerHTML = `
+                    <div style="display:flex; gap:6px; width:100%;">
+                        <button id="btn-step-back" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; background:#27272a; border-color:#27272a; border-radius:6px;">Back</button>
+                        <button id="btn-step-next" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; border-radius:6px;">Next ➔</button>
+                    </div>
+                `;
+
+                content.querySelectorAll('.step-choice-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        content.querySelectorAll('.step-choice-btn').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        chosenAnts = parseInt(btn.getAttribute('data-val'));
+                    });
+                });
+
+                document.getElementById('btn-step-back').addEventListener('click', () => {
+                    step = 1;
+                    renderWizardStep();
+                });
+                document.getElementById('btn-step-next').addEventListener('click', () => {
+                    step = 3;
+                    renderWizardStep();
+                });
+
+            } else if (step === 3) {
+                content.innerHTML = `
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 3: Choose Combat Scenario</h3>
+                    <p>Choose what happens when competing ants encounter and eliminate each other.</p>
+                    <div style="display:flex; flex-direction:column; gap:6px; margin: 12px 0;">
+                        <button class="step-choice-btn ${chosenCombat === 'removal' ? 'active' : ''}" data-val="removal" style="padding: 8px; font-weight:700; text-align:left; border-radius:6px; cursor:pointer; font-size:0.7rem;">💀 Removal (Recommended): Eliminated ants are removed.</button>
+                        <button class="step-choice-btn ${chosenCombat === 'respawn' ? 'active' : ''}" data-val="respawn" style="padding: 8px; font-weight:700; text-align:left; border-radius:6px; cursor:pointer; font-size:0.7rem;">🔄 Respawn: Eliminated ants respawn at their nest core.</button>
+                        <button class="step-choice-btn ${chosenCombat === 'conversion' ? 'active' : ''}" data-val="conversion" style="padding: 8px; font-weight:700; text-align:left; border-radius:6px; cursor:pointer; font-size:0.7rem;">🧬 Conversion: Defeated ants join the rival colony!</button>
+                    </div>
+                `;
+                buttons.innerHTML = `
+                    <div style="display:flex; gap:6px; width:100%;">
+                        <button id="btn-step-back" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; background:#27272a; border-color:#27272a; border-radius:6px;">Back</button>
+                        <button id="btn-step-next" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; border-radius:6px;">Next ➔</button>
+                    </div>
+                `;
+
+                content.querySelectorAll('.step-choice-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        content.querySelectorAll('.step-choice-btn').forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        chosenCombat = btn.getAttribute('data-val');
+                    });
+                });
+
+                document.getElementById('btn-step-back').addEventListener('click', () => {
+                    step = 2;
+                    renderWizardStep();
+                });
+                document.getElementById('btn-step-next').addEventListener('click', () => {
+                    step = 4;
+                    renderWizardStep();
+                });
+
+            } else if (step === 4) {
+                content.innerHTML = `
+                    <h3 style="margin:0 0 6px 0; font-size: 0.9rem;">Step 4: Personalities & Stances</h3>
+                    <p>Setup is complete! You can customize each colony's personality and outgoing diplomatic stances directly in the <strong>top-right glassmorphic panel</strong> after launching.</p>
+                    <p style="font-weight:700; color:#18181b; margin-top:8px;">Ready to run?</p>
+                `;
+                buttons.innerHTML = `
+                    <div style="display:flex; gap:6px; width:100%;">
+                        <button id="btn-step-back" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; background:#27272a; border-color:#27272a; border-radius:6px;">Back</button>
+                        <button id="btn-step-finish" class="btn-primary" style="flex:1; font-weight:700; font-size:0.75rem; padding:10px; background:#22c55e; border-color:#22c55e; border-radius:6px;">🚀 Launch Simulation</button>
+                    </div>
+                `;
+
+                document.getElementById('btn-step-back').addEventListener('click', () => {
+                    step = 3;
+                    renderWizardStep();
+                });
+                document.getElementById('btn-step-finish').addEventListener('click', () => {
+                    closeWizard();
+                    updateColonyCount(chosenColonies);
+                    updateAntCount(chosenAnts);
+                    setCombatMode(chosenCombat);
+                    rebuildSimulation();
+                    renderColonySetupPanel();
+                    
+                    const setupPanel = document.getElementById('colony-setup-panel');
+                    if (setupPanel) {
+                        setupPanel.style.boxShadow = '0 0 24px #eab308';
+                        setTimeout(() => {
+                            setupPanel.style.boxShadow = '0 8px 32px 0 rgba(0, 0, 0, 0.08)';
+                        }, 3000);
+                    }
+                });
+            }
+        }
+
+        function closeWizard() {
+            overlay.style.opacity = '0';
+            modal.style.opacity = '0';
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                modal.style.display = 'none';
+            }, 300);
+        }
+    }
+
+    initSetupWizard();
 };
 
 
