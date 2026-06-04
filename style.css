@@ -1595,13 +1595,14 @@ button {
     max-height: calc(100vh - 40px);
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    background: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.25) !important;
+    backdrop-filter: blur(16px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(140%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.08) !important;
+    padding: 14px !important;
+    border-radius: 16px !important;
 }
 .setup-colony-row {
     background: rgba(255, 255, 255, 0.65);

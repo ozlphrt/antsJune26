@@ -562,7 +562,7 @@ function renderColonySetupPanel() {
     // Dynamically adjust panel width to fit all active colony columns side-by-side without overlapping
     const panel = document.getElementById('colony-setup-panel');
     if (panel) {
-        const dynamicWidth = 24 + (activeColonyCount * 112);
+        const dynamicWidth = 32 + (activeColonyCount * 112);
         panel.style.width = `${dynamicWidth}px`;
     }
 
