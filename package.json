@@ -1,0 +1,12 @@
+{
+  "name": "ants-june26",
+  "version": "1.0.0",
+  "description": "Ant simulation project",
+  "main": "main.js",
+  "scripts": {
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

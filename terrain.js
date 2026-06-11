@@ -192,7 +192,7 @@ export function createTerrainMesh(width, depth, segments) {
     
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;
-    mesh.castShadow = true;
+    mesh.castShadow = false; // Terrain doesn't need to self-shadow — saves shadow depth pass cost
 
     // High-tech overlay grid
     const wireMaterial = new THREE.MeshBasicMaterial({

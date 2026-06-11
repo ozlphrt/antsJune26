@@ -11,6 +11,7 @@ const gridMin = -70;
 const totalGridCells = gridDim * gridDim;
 const collisionGrid = Array.from({ length: totalGridCells }, () => []);
 const occupiedCells = [];
+let _combatFrame = 0; // Module-level counter for staggered combat scan (alternates each update call)
 
 
 class Ant {
@@ -58,7 +59,7 @@ class Ant {
         this.pheromoneStrength = Math.max(0.05, this.pheromoneStrength * 0.995);
     }
     
-    steer(pheromones, nestX, nestZ, foods, sensorAngleRad, sensorDist, speed, allColonies = null, ownColonyId = 0) {
+    steer(pheromones, nestX, nestZ, foods, sensorAngleRad, sensorDist, speed, allColonies = null, ownColonyId = 0, freeFoodAvailable = false) {
         // 0. Combat steering priority
         if (this.combatTarget && this.combatTarget.hp > 0) {
             const dx = this.combatTarget.x - this.x;
@@ -75,7 +76,6 @@ class Ant {
 
         // 1. Direct Target Attraction
         if (this.state === 'explore') {
-            const freeFoodAvailable = foods.some(f => f.amount > 0);
             
             if (freeFoodAvailable) {
                 // Look for nearby food piles to steer directly toward them (scaled for medium food size)
@@ -298,6 +298,7 @@ export class ColonyManager {
         this.foods = sharedFoods || [];
         this.obstacles = sharedObstacles || [];
         this.foodCollected = 0;
+        this.foodStolen = 0;
         this.personality = 'dove'; // Game theory personality: 'hawk', 'dove', 'grudger', 'bully'
         this.stances = {}; // colonyId -> 'Allied' | 'Neutral' | 'Hostile'
         this.foodPileData = [];
@@ -312,7 +313,17 @@ export class ColonyManager {
         this.instancedMesh = null;
         this.foodPileGroup = null;
         this.createAntVisuals(initialAntCount);
-        
+
+        // Pre-allocated scratch objects — reused every frame to avoid GC pressure
+        this._scratchForward = new THREE.Vector3();
+        this._scratchRight   = new THREE.Vector3();
+        this._scratchAdjFwd  = new THREE.Vector3();
+        this._scratchNormal  = new THREE.Vector3();
+        this._scratchRotMat  = new THREE.Matrix4();
+        this._hiddenDummy    = new THREE.Object3D();
+        this._hiddenDummy.position.set(9999, 9999, 9999);
+        this._hiddenDummy.updateMatrix();
+
         // Setup initial population
         this.setPopulation(initialAntCount);
     }
@@ -462,6 +473,9 @@ export class ColonyManager {
         
         // If ant coordinates are provided, compute position relative to nest center based on approach angle
         if (antX !== undefined && antZ !== undefined) {
+            if (window.nests && window.nests[this.colonyId]) {
+                window.nests[this.colonyId].userData.depositPulse = 1.0;
+            }
             const dx = antX - this.nestX;
             const dz = antZ - this.nestZ;
             const dist = Math.sqrt(dx * dx + dz * dz);
@@ -504,9 +518,10 @@ export class ColonyManager {
                 layer: layer
             });
         }
-        
-        // Ensure foodPileData length matches foodCollected count
-        const targetChunks = this.foodCollected;
+
+        // Cap visible pile at 120 chunks — beyond this it becomes indistinct and each chunk is a draw call
+        const MAX_PILE_CHUNKS = 120;
+        const targetChunks = Math.min(this.foodCollected, MAX_PILE_CHUNKS);
         
         while (this.foodPileData.length < targetChunks) {
             // Generate fallback piece at random angle if there's any data mismatch
@@ -741,15 +756,37 @@ export class ColonyManager {
         const colorForaging = this.exploreColor;
         const colorCarrying = this.carryingColor;
         const dt = 0.016;
+        // Compute once per frame — avoid per-ant foods.some() scan
+        const freeFoodAvailable = this.foods.some(f => f.amount > 0);
         
+        // Pre-compute live population counts once per frame (avoids per-ant .filter() GC allocations)
+        // Used by bully/dove logic below
+        const liveCount = new Int32Array(allColonies ? allColonies.length : 0);
+        if (allColonies) {
+            for (let c = 0; c < allColonies.length; c++) {
+                const col = allColonies[c];
+                for (let a = 0; a < col.ants.length; a++) {
+                    if (col.ants[a].hp > 0) liveCount[c]++;
+                }
+            }
+        }
+        const ownLiveCount = allColonies ? liveCount[this.colonyId] : 0;
+        
+        // Global frame parity for staggered combat scan (shared across all colony updates per frame)
+        _combatFrame = (_combatFrame + 1) & 0xFFFF;
+        const combatFrameParity = _combatFrame & 1;
+
         // Combat updates: check proximity, target acquisition, deal damage, handle respawns
         if (allColonies) {
             for (let i = 0; i < this.ants.length; i++) {
                 const ant = this.ants[i];
                 if (ant.hp <= 0) continue;
                 
-                // Target selection
+                // Target selection — stagger: only scan for new targets on ants whose index
+                // parity matches the current frame parity. Ants with existing valid targets
+                // always proceed to the damage block below regardless.
                 if (!ant.combatTarget || ant.combatTarget.hp <= 0) {
+                    if ((i & 1) !== combatFrameParity) continue; // Skip scan this frame
                     // Check if ant is in an engagement zone (near food or near nests)
                     let nearFood = false;
                     for (let f = 0; f < this.foods.length; f++) {
@@ -824,9 +861,9 @@ export class ColonyManager {
                                     }
                                 } else if (p === 'bully') {
                                     // Bully attacks only if we have a population advantage > 20%
-                                    const ourPop = this.ants.filter(a => a.hp > 0).length;
-                                    const theirPop = enemyColony.ants.filter(a => a.hp > 0).length;
-                                    if (ourPop > theirPop * 1.2) {
+                                    // Uses pre-computed liveCount to avoid per-ant .filter() GC cost
+                                    const theirLive = liveCount[enemyColony.colonyId];
+                                    if (ownLiveCount > theirLive * 1.2) {
                                         ant.combatTarget = closestEnemy;
                                         if (!closestEnemy.combatTarget) {
                                             closestEnemy.combatTarget = ant;
@@ -842,7 +879,7 @@ export class ColonyManager {
                                     if (closestEnemy.combatTarget === ant) {
                                         // Defend if targeted
                                         ant.combatTarget = closestEnemy;
-                                    } else if (enemyColony.personality === 'hawk' || (enemyColony.personality === 'bully' && enemyColony.ants.filter(a => a.hp > 0).length > this.ants.filter(a => a.hp > 0).length * 1.2)) {
+                                    } else if (enemyColony.personality === 'hawk' || (enemyColony.personality === 'bully' && liveCount[enemyColony.colonyId] > ownLiveCount * 1.2)) {
                                         // Flee if the other is a hawk/bully
                                         ant.angle = Math.atan2(ant.x - closestEnemy.x, ant.z - closestEnemy.z) + (Math.random() - 0.5) * 0.3;
                                     }
@@ -872,6 +909,9 @@ export class ColonyManager {
                         
                         // Spawn combat sparks occasionally
                         if (Math.random() < 0.12 && window.spawnCombatSparks) {
+                            if (window.playHitSound) {
+                                window.playHitSound();
+                            }
                             // Find opponent colony color
                             let opponentExploreColor = 0xffffff;
                             const opponentColony = allColonies.find(c => c.colonyId === ant.combatTarget.colonyId);
@@ -1090,8 +1130,8 @@ export class ColonyManager {
                 const distMoved = Math.sqrt(dx * dx + dz * dz);
                 
                 if (distMoved > 0.001 && !food.isLoot) {
-                    // Rotation axis is perpendicular to actual displacement vector in X-Z plane
-                    const axis = new THREE.Vector3(-dz, 0, dx).normalize();
+                    // Rotation axis is perpendicular to actual displacement vector in X-Z plane (corrected for forward roll)
+                    const axis = new THREE.Vector3(dz, 0, -dx).normalize();
                     const rollAngle = distMoved / foodRadius;
                     food.mesh.rotateOnWorldAxis(axis, rollAngle);
                 }
@@ -1245,7 +1285,7 @@ export class ColonyManager {
             }
             
             // 1. Steering & Movement
-            ant.steer(pheromones, this.nestX, this.nestZ, this.foods, this.sensorAngle, this.sensorDistance, this.antSpeed);
+            ant.steer(pheromones, this.nestX, this.nestZ, this.foods, this.sensorAngle, this.sensorDistance, this.antSpeed, allColonies, this.colonyId, freeFoodAvailable);
             ant.move(this.antSpeed * 0.1, worldSize);
             
             // Obstacle physical collisions
@@ -1277,6 +1317,7 @@ export class ColonyManager {
             // 2. Resource Interaction Check
             if (ant.state === 'explore') {
                 // Check if ant is touching any food source
+                let gathered = false;
                 for (let j = 0; j < this.foods.length; j++) {
                     const food = this.foods[j];
                     if (food.amount <= 0) continue;
@@ -1291,6 +1332,10 @@ export class ColonyManager {
                         ant.state = 'return';
                         ant.pheromoneStrength = 1.0; // Refill deposit level
                         ant.angle += Math.PI; // Spin 180 degrees to head home
+                        gathered = true;
+                        if (window.playGatherSound) {
+                            window.playGatherSound();
+                        }
                         
                         // Scale the apple down as it gets eaten
                         const scale = 0.3 + 0.7 * (food.amount / food.maxAmount);
@@ -1302,6 +1347,44 @@ export class ColonyManager {
                         break;
                     }
                 }
+
+                // If no natural food is gathered, check if ant is close enough to raid an enemy nest
+                if (!gathered && allColonies) {
+                    for (let c = 0; c < allColonies.length; c++) {
+                        const enemyCol = allColonies[c];
+                        if (enemyCol.colonyId === this.colonyId || enemyCol.isGraveyard || enemyCol.foodCollected <= 0) continue;
+                        
+                        // Allied colonies do not raid
+                        if (this.stances[enemyCol.colonyId] === 'Allied') continue;
+                        
+                        const dx = enemyCol.nestX - ant.x;
+                        const dz = enemyCol.nestZ - ant.z;
+                        const distToNest = Math.sqrt(dx*dx + dz*dz);
+                        
+                        if (distToNest < 2.5) {
+                            // Raid success! Steal 1 food
+                            enemyCol.foodCollected = Math.max(0, enemyCol.foodCollected - 1);
+                            enemyCol.updateNestFoodPile(enemyCol.nestX, enemyCol.nestZ);
+                            
+                            ant.state = 'return';
+                            ant.isCarryingStolen = true;
+                            ant.pheromoneStrength = 1.0;
+                            ant.angle += Math.PI; // Head back home
+                            
+                            if (window.playGatherSound) {
+                                window.playGatherSound();
+                            }
+                            
+                            // Push narrative event
+                            if (window.statsEngine) {
+                                const ownName = this.colonyId === 0 ? "Green" : this.colonyId === 1 ? "Blue" : this.colonyId === 2 ? "Gold" : "Colony " + this.colonyId;
+                                const enemyName = enemyCol.colonyId === 0 ? "Green" : enemyCol.colonyId === 1 ? "Blue" : enemyCol.colonyId === 2 ? "Gold" : "Colony " + enemyCol.colonyId;
+                                window.statsEngine.pushEvent('raid', `💥 ${ownName} colony raided ${enemyName} nest and stole food!`, `raid_${this.colonyId}_${enemyCol.colonyId}`, 15000);
+                            }
+                            break;
+                        }
+                    }
+                }
             } else {
                 // State: return. Check if ant is back in Nest area
                 const dx = this.nestX - ant.x;
@@ -1311,10 +1394,17 @@ export class ColonyManager {
                 if (distToNest < 2.5) {
                     // Deposit food!
                     this.foodCollected++;
+                    if (ant.isCarryingStolen) {
+                        this.foodStolen = (this.foodStolen || 0) + 1;
+                        ant.isCarryingStolen = false;
+                    }
                     this.updateNestFoodPile(ant.x, ant.z);
                     ant.state = 'explore';
                     ant.pheromoneStrength = 1.0; // Refill deposit level
                     ant.angle += Math.PI; // Turn back out to search
+                    if (window.playDepositSound) {
+                        window.playDepositSound();
+                    }
                 }
             }
             
@@ -1327,27 +1417,24 @@ export class ColonyManager {
             const hR = getTerrainHeight(ant.x + delta, ant.z);
             const hD = getTerrainHeight(ant.x, ant.z - delta);
             const hU = getTerrainHeight(ant.x, ant.z + delta);
-            
-            const targetNormal = new THREE.Vector3(hL - hR, 2 * delta, hD - hU).normalize();
+
+            const targetNormal = this._scratchNormal.set(hL - hR, 2 * delta, hD - hU).normalize();
             if (!ant.normal) {
                 ant.normal = new THREE.Vector3(0, 1, 0);
             }
-            ant.normal.lerp(targetNormal, 0.15); // Smooth orientation transitions
+            ant.normal.lerp(targetNormal, 0.15);
             const normal = ant.normal;
-            
-            // Setup direction vector
+
             const dirX = Math.sin(ant.angle);
             const dirZ = Math.cos(ant.angle);
-            const forward = new THREE.Vector3(dirX, 0, dirZ).normalize();
-            
-            // Project forward direction onto terrain surface tangent
-            const right = new THREE.Vector3().crossVectors(forward, normal).normalize();
-            const adjustedForward = new THREE.Vector3().crossVectors(normal, right).normalize();
-            
-            // Construct a rotation matrix matching the vectors
-            const rotMatrix = new THREE.Matrix4().makeBasis(right, normal, adjustedForward);
+            const forward = this._scratchForward.set(dirX, 0, dirZ).normalize();
+
+            const right = this._scratchRight.crossVectors(forward, normal).normalize();
+            const adjustedForward = this._scratchAdjFwd.crossVectors(normal, right).normalize();
+
+            const rotMatrix = this._scratchRotMat.makeBasis(right, normal, adjustedForward);
             dummy.rotation.setFromRotationMatrix(rotMatrix);
-            
+
             dummy.updateMatrix();
             this.instancedMesh.setMatrixAt(i, dummy.matrix);
 
@@ -1355,10 +1442,7 @@ export class ColonyManager {
             if (ant.state === 'return') {
                 this.foodCarriedMesh.setMatrixAt(i, dummy.matrix);
             } else {
-                const hiddenDummy = new THREE.Object3D();
-                hiddenDummy.position.set(9999, 9999, 9999);
-                hiddenDummy.updateMatrix();
-                this.foodCarriedMesh.setMatrixAt(i, hiddenDummy.matrix);
+                this.foodCarriedMesh.setMatrixAt(i, this._hiddenDummy.matrix);
             }
             
             // Set Color based on signature colony color (unchanged when carrying food)
@@ -1366,12 +1450,9 @@ export class ColonyManager {
         }
         
         // Hide unused/surplus instances in the pool
-        const hiddenDummy = new THREE.Object3D();
-        hiddenDummy.position.set(9999, 9999, 9999);
-        hiddenDummy.updateMatrix();
         for (let i = this.ants.length; i < this.instancedMesh.count; i++) {
-            this.instancedMesh.setMatrixAt(i, hiddenDummy.matrix);
-            this.foodCarriedMesh.setMatrixAt(i, hiddenDummy.matrix);
+            this.instancedMesh.setMatrixAt(i, this._hiddenDummy.matrix);
+            this.foodCarriedMesh.setMatrixAt(i, this._hiddenDummy.matrix);
         }
         
         this.instancedMesh.instanceMatrix.needsUpdate = true;
@@ -1426,6 +1507,7 @@ export class ColonyManager {
         }
         
         this.foodCollected = 0;
+        this.foodStolen = 0;
         this.foodPileData = [];
         this.updateNestFoodPile();
     }

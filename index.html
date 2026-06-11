@@ -35,6 +35,12 @@
     </div>
 
     <!-- Interactive Status Pills (Bottom Right) -->
+    <!-- FPS Counter Pill -->
+    <div id="btn-fps-pill" class="pill-btn fps-pill-pos">
+        <span class="pill-icon">⚡</span>
+        <span id="pill-fps-value" class="pill-value">-- FPS</span>
+    </div>
+
     <button id="btn-ant-pill" class="pill-btn ant-pill-pos">
         <span class="pill-icon">🐜</span>
         <span id="pill-ant-count" class="pill-value">0</span>
@@ -58,6 +64,34 @@
         </div>
         <input type="range" id="popup-colony-count" min="2" max="6" step="1" value="3">
     </div>
+
+    <button id="btn-audio-pill" class="pill-btn audio-pill-pos audio-btn" onclick="toggleAudio()" title="Toggle Sound">
+        <span id="pill-audio-icon" class="pill-icon">🔇</span>
+        <span id="pill-audio-label" class="pill-value">Muted</span>
+    </button>
+    <script>
+        window.audioEnabled = false;
+        window.audioCtx = null;
+        function toggleAudio() {
+            window.audioEnabled = !window.audioEnabled;
+            var btn = document.getElementById('btn-audio-pill');
+            var icon = document.getElementById('pill-audio-icon');
+            var label = document.getElementById('pill-audio-label');
+            if (window.audioEnabled) {
+                if (!window.audioCtx) {
+                    window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                window.audioCtx.resume();
+                if (btn) btn.classList.add('audio-active');
+                if (icon) icon.textContent = '🔊';
+                if (label) label.textContent = 'Active';
+            } else {
+                if (btn) btn.classList.remove('audio-active');
+                if (icon) icon.textContent = '🔇';
+                if (label) label.textContent = 'Muted';
+            }
+        }
+    </script>
 
     <button id="btn-combat-pill" class="pill-btn combat-pill-pos">
         <span class="pill-icon">⚔️</span>

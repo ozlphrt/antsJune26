@@ -21,8 +21,12 @@ let nests = [];
 let highlightRing; // Selection ring for followed ant
 const cameraLookTarget = new THREE.Vector3(); // Persistent look-at vector for camera smoothing
 let lastTime = 0;
-let frameCount = 0;
+let frameCount = 0;      // Resets every second (FPS counter)
+let animFrameTotal = 0; // Never resets — used for stable modulo throttling
 let fpsTimer = 0;
+let hudUpdateCounter = 0; // Throttle HUD DOM writes
+// Cached HUD element refs (grabbed once, avoids getElementById per frame)
+let _hudStatAnts, _hudStatForaging, _hudPillAnt;
 let combatParticles;
 window.combatMode = 'removal'; // Global combat scenario mode: 'respawn', 'removal', 'conversion'
 let prevColonyDefeated = []; // Track previous values to animate changes
@@ -34,6 +38,8 @@ let lastPredictionTitle = ''; // Track last displayed prediction for toast popup
 let lastIntelUpdateTime = 0; // Throttle intel dashboard rendering to prevent flickering
 let colonySetupStrategies = {}; // Cache of colony personalities and stances
 let selectedSetupColonyId = 0; // Currently selected colony index in setup panel
+
+
 
 
 
@@ -168,6 +174,7 @@ let colonies = [];
 let pheromoneGrids = [];
 let pheromoneOverlays = []; // Overlay meshes that project pheromones onto terrain
 let floatingHealthBags = []; // Floating health bag meshes when ants are defeated
+let modifiedVertices = new Set(); // Modified terrain vertices for fast local updates
 const sharedFoods = [];
 const sharedObstacles = [];
 
@@ -324,6 +331,7 @@ function adjustCameraToFrameNests(instant = false) {
         transitionTargetPos.copy(targetPos);
         transitionTargetLook.copy(targetLook);
         isTransitioningCamera = true;
+        controls.autoRotate = false;
     }
 }
 
@@ -585,6 +593,25 @@ function renderColonySetupPanel() {
         }
     }
 
+    // Guarantee at least one hawk in the mix
+    let hasHawk = false;
+    for (let i = 0; i < activeColonyCount; i++) {
+        if (colonySetupStrategies[i] && colonySetupStrategies[i].personality === 'hawk') {
+            hasHawk = true;
+            break;
+        }
+    }
+    if (!hasHawk && activeColonyCount > 0) {
+        const idx = Math.floor(Math.random() * activeColonyCount);
+        if (colonySetupStrategies[idx]) {
+            colonySetupStrategies[idx].personality = 'hawk';
+            for (let j = 0; j < activeColonyCount; j++) {
+                if (idx === j) continue;
+                colonySetupStrategies[idx].stances[j] = 'Hostile';
+            }
+        }
+    }
+
     let columnsHtml = `<div style="display:flex; gap:6px; justify-content:space-between; width:100%; padding:4px 0;">`;
 
     for (let i = 0; i < activeColonyCount; i++) {
@@ -728,6 +755,9 @@ function renderColonySetupPanel() {
 
 
 function rebuildSimulation() {
+    if (window.playResetSound) {
+        window.playResetSound();
+    }
     prevColonyDefeated = [];
     // 1. Clean up old elements
     nests.forEach(nest => {
@@ -747,6 +777,7 @@ function rebuildSimulation() {
         });
     });
     floatingHealthBags = [];
+    modifiedVertices.clear();
     
     pheromoneOverlays.forEach(overlay => {
         if (overlay.parent) scene.remove(overlay);
@@ -777,6 +808,7 @@ function rebuildSimulation() {
         const nestMesh = createNest(nestPositions[i].x, nestPositions[i].z, nestPositions[i].core);
         nests.push(nestMesh);
     }
+    window.nests = nests;
     
     // 4. Recreate pheromone overlays and colony managers
     const overlayGeometry = terrainMesh.geometry.clone();
@@ -803,9 +835,12 @@ function rebuildSimulation() {
         const overlayMaterial = new THREE.MeshBasicMaterial({
             map: pGrid.texture,
             transparent: true,
-            opacity: 0.85, // Raised opacity to make light/mid/dark bands clearly visible
+            opacity: 0.85,
             depthWrite: false,
-            blending: THREE.NormalBlending
+            blending: THREE.NormalBlending,
+            polygonOffset: true,        // Prevent z-fighting with terrain
+            polygonOffsetFactor: -1,    // Bias overlay toward camera
+            polygonOffsetUnits: -1
         });
         const pheromoneOverlay = new THREE.Mesh(overlayGeometry, overlayMaterial);
         pheromoneOverlay.position.y = 0.04 + i * 0.005;
@@ -831,11 +866,30 @@ function rebuildSimulation() {
         // Apply configured game theory personality and stances
         if (!colonySetupStrategies[i]) {
             const personalities = ['dove', 'hawk', 'grudger', 'bully'];
-            const randomPers = personalities[Math.floor(Math.random() * personalities.length)];
+            let randomPers = personalities[Math.floor(Math.random() * personalities.length)];
+            
+            if (i === activeColonyCount - 1) {
+                let hasHawk = false;
+                for (let k = 0; k < activeColonyCount; k++) {
+                    if (colonySetupStrategies[k] && colonySetupStrategies[k].personality === 'hawk') {
+                        hasHawk = true;
+                        break;
+                    }
+                }
+                if (!hasHawk) randomPers = 'hawk';
+            }
+
             colonySetupStrategies[i] = {
                 personality: randomPers,
                 stances: {}
             };
+
+            if (randomPers === 'hawk') {
+                for (let j = 0; j < activeColonyCount; j++) {
+                    if (i === j) continue;
+                    colonySetupStrategies[i].stances[j] = 'Hostile';
+                }
+            }
         }
         colManager.personality = colonySetupStrategies[i].personality;
         colManager.stances = { ...colonySetupStrategies[i].stances };
@@ -1058,71 +1112,80 @@ function createNest(x, z, coreColor) {
     return nestGroup;
 }
 
-function createGraveyard(x, z) {
+function createGraveyard(x, z, colonyColor) {
     const graveGroup = new THREE.Group();
     const yPos = getTerrainHeight(x, z);
     
-    // 1. Dark, ruined grey/black collapsed organic mound
-    const moundGeom = new THREE.SphereGeometry(2.2, 16, 12);
-    moundGeom.scale(1.0, 0.4, 1.0); // Collapse shape
+    // 1. Grave soil plot mound (long rectangular soil plot)
+    const moundGeom = new THREE.BoxGeometry(2.4, 0.22, 1.3);
     const moundMat = new THREE.MeshStandardMaterial({
-        color: 0x27272a, // Zinc dark charcoal
+        color: colonyColor || 0x3f2e22, // Same color as the colony
         roughness: 0.95,
         flatShading: true
     });
     const mound = new THREE.Mesh(moundGeom, moundMat);
+    mound.position.y = 0.11; // Sit on ground
     mound.castShadow = true;
     mound.receiveShadow = true;
     graveGroup.add(mound);
     
-    // 2. Add 2-3 weathered stone tombstones/headstones
-    const tsCount = 2 + Math.floor(Math.random() * 2);
-    const tsGeom = new THREE.BoxGeometry(0.35, 0.65, 0.12);
-    tsGeom.translate(0, 0.325, 0); // Offset pivot
-    
-    const tsMat = new THREE.MeshStandardMaterial({
-        color: 0x52525b, // Zinc weathered grey
+    // 2. Weathered stone cross
+    const crossGroup = new THREE.Group();
+    const stoneMat = new THREE.MeshStandardMaterial({
+        color: 0x5b5b66, // Weathered slate grey
         roughness: 0.9,
         flatShading: true
     });
     
-    for (let i = 0; i < tsCount; i++) {
-        const ts = new THREE.Mesh(tsGeom, tsMat);
-        ts.castShadow = true;
-        
-        const angle = (i * Math.PI * 2) / tsCount + (Math.random() - 0.5) * 0.4;
-        const radius = 0.5 + Math.random() * 0.7;
-        const tx = Math.cos(angle) * radius;
-        const tz = Math.sin(angle) * radius;
-        const ty = 0.05 + Math.random() * 0.15;
-        
-        ts.position.set(tx, ty, tz);
-        ts.rotation.x = (Math.random() - 0.5) * 0.3;
-        ts.rotation.z = (Math.random() - 0.5) * 0.3;
-        ts.rotation.y = Math.random() * Math.PI * 2;
-        
-        const scale = 0.8 + Math.random() * 0.4;
-        ts.scale.set(scale, scale, scale);
-        
-        graveGroup.add(ts);
-    }
+    // Vertical post
+    const vertGeom = new THREE.BoxGeometry(0.25, 1.6, 0.2);
+    const vertPost = new THREE.Mesh(vertGeom, stoneMat);
+    vertPost.position.y = 0.8;
+    vertPost.castShadow = true;
+    crossGroup.add(vertPost);
     
-    // 3. Rubble stone chunks
-    const chunkGeom = new THREE.DodecahedronGeometry(0.16, 0);
-    for (let i = 0; i < 4; i++) {
-        const chunk = new THREE.Mesh(chunkGeom, tsMat);
-        chunk.position.set(
-            (Math.random() - 0.5) * 2.2,
-            0.05,
-            (Math.random() - 0.5) * 2.2
-        );
+    // Horizontal post
+    const horizGeom = new THREE.BoxGeometry(1.0, 0.22, 0.22);
+    const horizPost = new THREE.Mesh(horizGeom, stoneMat);
+    horizPost.position.set(0, 1.15, 0.01);
+    horizPost.castShadow = true;
+    crossGroup.add(horizPost);
+    
+    // Position the cross at the head of the grave plot
+    crossGroup.position.set(-0.7, 0.15, 0);
+    // Slight tilt for an ancient, weathered cemetery look
+    crossGroup.rotation.z = 0.12; 
+    crossGroup.rotation.y = 0.15;
+    crossGroup.rotation.x = -0.05;
+    
+    graveGroup.add(crossGroup);
+    
+    // 3. Small broken headstone slab at the foot of the grave
+    const tsGeom = new THREE.BoxGeometry(0.4, 0.7, 0.15);
+    const ts = new THREE.Mesh(tsGeom, stoneMat);
+    ts.castShadow = true;
+    ts.position.set(0.6, 0.3, 0.2);
+    ts.rotation.set(0.2, -0.3, -0.25);
+    graveGroup.add(ts);
+    
+    // 4. Rubble stone chunks scattered around
+    const chunkGeom = new THREE.DodecahedronGeometry(0.15, 0);
+    const chunkPositions = [
+        [0.8, 0.05, -0.4],
+        [-0.4, 0.05, 0.5],
+        [-0.9, 0.05, -0.5]
+    ];
+    chunkPositions.forEach(pos => {
+        const chunk = new THREE.Mesh(chunkGeom, stoneMat);
+        chunk.position.set(pos[0], pos[1], pos[2]);
         chunk.rotation.set(Math.random(), Math.random(), Math.random());
         graveGroup.add(chunk);
-    }
+    });
     
     // Explicitly initialize empty userData to avoid animation loop type-errors
     graveGroup.userData = {};
     graveGroup.position.set(x, yPos, z);
+    graveGroup.scale.set(2.0, 2.0, 2.0); // Make it the same size as the nests
     
     return graveGroup;
 }
@@ -1191,11 +1254,11 @@ function init() {
     camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 50, 75);
     
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = new THREE.WebGLRenderer({ antialias: false }); // flatShading geometry looks fine without MSAA
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(1); // Force 1:1 — HiDPI at 1.5× costs 2.25× more fragments for minimal visual gain
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap; // Restored: BasicShadowMap caused worse z-fighting artefacts
     container.appendChild(renderer.domElement);
     
     controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -1205,29 +1268,49 @@ function init() {
     controls.minDistance = 5;
     controls.maxDistance = 150;
     controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.45;
+    controls.autoRotateSpeed = 0.22;
     
-    // Cancel camera autotransitions if user interacts manually
+    // Cancel camera autotransitions and pause auto-spin if user interacts manually
     controls.addEventListener('start', () => {
         isTransitioningCamera = false;
+        controls.autoRotate = false;
+        if (window.autoRotateTimeout) clearTimeout(window.autoRotateTimeout);
+    });
+
+    // Resume auto-spin after 6 seconds of inactivity if not in follow mode
+    controls.addEventListener('end', () => {
+        if (cameraPresetMode !== 'ant') {
+            if (window.autoRotateTimeout) clearTimeout(window.autoRotateTimeout);
+            window.autoRotateTimeout = setTimeout(() => {
+                if (cameraPresetMode !== 'ant') {
+                    controls.autoRotate = true;
+                }
+            }, 6000);
+        }
     });
     
-    ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    // Professional hemisphere ambient lighting (simulates sky glow & ground bounce)
+    const hemiLight = new THREE.HemisphereLight(0xdce9f5, 0x3a483a, 0.45);
+    hemiLight.position.set(0, 200, 0);
+    scene.add(hemiLight);
+
+    ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
     scene.add(ambientLight);
     
-    dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
-    dirLight.position.set(50, 100, 30);
+    // Warm key sun light casting sharp shadows
+    dirLight = new THREE.DirectionalLight(0xfff8f2, 1.15);
+    dirLight.position.set(65, 110, 35);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 200;
+    dirLight.shadow.camera.far = 220;
     const d = 80;
     dirLight.shadow.camera.left = -d;
     dirLight.shadow.camera.right = d;
     dirLight.shadow.camera.top = d;
     dirLight.shadow.camera.bottom = -d;
-    dirLight.shadow.bias = -0.0005;
+    dirLight.shadow.bias = -0.0004;
     scene.add(dirLight);
     
     const ringGeom = new THREE.TorusGeometry(0.7, 0.05, 8, 24);
@@ -1240,79 +1323,70 @@ function init() {
     highlightRing.visible = false;
     scene.add(highlightRing);
     
-    let audioCtx = null;
-    let audioEnabled = false; // Muted by default to ensure browser compliance and clean start
-    let lastDefeatSoundTime = 0;
-    
+    const audioTimes = {
+        defeat: 0,
+        gather: 0,
+        deposit: 0,
+        hit: 0,
+        click: 0,
+        eliminated: 0,
+        reset: 0
+    };
+
     function initAudio() {
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (!window.audioCtx) {
+            window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
-        if (audioCtx && audioCtx.state === 'suspended') {
-            audioCtx.resume();
+        if (window.audioCtx && window.audioCtx.state === 'suspended') {
+            window.audioCtx.resume();
         }
     }
 
+    window.playClickSound = () => {};
+    window.playGatherSound = () => {};
+    window.playDepositSound = () => {};
+    window.playHitSound = () => {};
+
+    // Very subtle, minimal sine-wave thud when an ant is defeated
     window.playDefeatSound = () => {
-        if (!audioEnabled) return;
+        if (!window.audioEnabled) return;
         const now = Date.now();
-        if (now - lastDefeatSoundTime < 600) return; // Prevent rapid noisy overlapping
-        lastDefeatSoundTime = now;
-        
+        if (now - audioTimes.defeat < 300) return;
+        audioTimes.defeat = now;
         try {
             initAudio();
-            if (!audioCtx || audioCtx.state === 'suspended') return;
-            
-            // Soft wood-like pop/crunch pluck
-            const osc = audioCtx.createOscillator();
-            const gainNode = audioCtx.createGain();
-            
-            osc.type = 'triangle';
-            osc.frequency.setValueAtTime(140, audioCtx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
-            
-            gainNode.gain.setValueAtTime(0.0, audioCtx.currentTime);
-            gainNode.gain.linearRampToValueAtTime(0.06, audioCtx.currentTime + 0.01);
-            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.15);
-            
-            osc.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.16);
-        } catch(e) {}
-    };
-
-    window.playKickSound = () => {
-        if (!audioEnabled) return;
-        try {
-            initAudio();
-            if (!audioCtx || audioCtx.state === 'suspended') return;
-            
-            // Pleasant, soft organic chime/plop
-            const osc = audioCtx.createOscillator();
-            const gainNode = audioCtx.createGain();
-            
+            if (!window.audioCtx || window.audioCtx.state === 'suspended') return;
+            const t = window.audioCtx.currentTime;
+            const osc = window.audioCtx.createOscillator();
+            const gain = window.audioCtx.createGain();
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(320, audioCtx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.12);
-            
-            gainNode.gain.setValueAtTime(0.0, audioCtx.currentTime);
-            gainNode.gain.linearRampToValueAtTime(0.04, audioCtx.currentTime + 0.01);
-            gainNode.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.12);
-            
-            osc.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.13);
+            osc.frequency.setValueAtTime(90, t);
+            osc.frequency.exponentialRampToValueAtTime(30, t + 0.09);
+            gain.gain.setValueAtTime(0.0, t);
+            gain.gain.linearRampToValueAtTime(0.18, t + 0.008);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+            osc.connect(gain);
+            gain.connect(window.audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.1);
         } catch(e) {}
     };
 
-    window.addEventListener('pointerdown', initAudio, { once: true });
-    window.addEventListener('touchstart', initAudio, { once: true });
-    window.addEventListener('click', initAudio, { once: true });
-    window.addEventListener('touchend', initAudio, { once: true });
+    window.playKickSound = () => {};
+    window.playResetSound = () => {};
+    window.playEliminationSound = () => {};
+
+    window.addEventListener('pointerdown', initAudio);
+    window.addEventListener('touchstart', initAudio);
+    window.addEventListener('click', initAudio);
+
+    // Global listener for playing a clean click sound on any button/interactive element
+    document.addEventListener('click', (e) => {
+        const button = e.target.closest('button, .preset-option-btn, .combat-option-btn, .intel-tab-btn');
+        if (button && window.playClickSound) {
+            window.playClickSound();
+        }
+    });
 
     combatParticles = new CombatParticleSystem(scene);
     window.spawnCombatSparks = (x, y, z, c1, c2) => {
@@ -1351,6 +1425,55 @@ function init() {
     });
     
     initCustomTooltip();
+
+    // Setup panel auto-minimize / scale-down behavior
+    const setupPanel = document.getElementById('colony-setup-panel');
+    if (setupPanel) {
+        let minimizeTimeout = null;
+
+        const minimize = () => {
+            setupPanel.classList.add('minimized');
+            if (minimizeTimeout) {
+                clearTimeout(minimizeTimeout);
+                minimizeTimeout = null;
+            }
+        };
+
+        const expand = () => {
+            setupPanel.classList.remove('minimized');
+            resetMinimizeTimer();
+        };
+
+        const resetMinimizeTimer = () => {
+            if (minimizeTimeout) {
+                clearTimeout(minimizeTimeout);
+            }
+            minimizeTimeout = setTimeout(() => {
+                minimize();
+            }, 5000);
+        };
+
+        // Minimize by default
+        minimize();
+
+        // Expand on hover
+        setupPanel.addEventListener('mouseenter', expand);
+
+        // Reset timer on click inside the panel
+        setupPanel.addEventListener('click', (e) => {
+            // Prevent immediate minimization from the document click listener
+            e.stopPropagation();
+            resetMinimizeTimer();
+        });
+
+        // Minimize immediately on click outside the panel
+        document.addEventListener('click', (e) => {
+            if (!setupPanel.contains(e.target)) {
+                minimize();
+            }
+        });
+    }
+
     requestAnimationFrame(animate);
 }
 
@@ -1432,27 +1555,11 @@ function setupUI() {
     const btnFollow = document.getElementById('btn-camera-follow');
     
     btnOrbit.addEventListener('click', () => {
-        followAntMode = false;
-        cameraPresetMode = 'default';
-        btnOrbit.classList.add('active');
-        btnFollow.classList.remove('active');
-        controls.enabled = true;
-        document.querySelectorAll('.preset-option-btn').forEach(btn => {
-            if (btn.getAttribute('data-preset') === 'default') btn.classList.add('active');
-            else btn.classList.remove('active');
-        });
+        applyCameraPreset('default');
     });
     
     btnFollow.addEventListener('click', () => {
-        followAntMode = true;
-        cameraPresetMode = 'ant';
-        btnFollow.classList.add('active');
-        btnOrbit.classList.remove('active');
-        controls.enabled = false;
-        document.querySelectorAll('.preset-option-btn').forEach(btn => {
-            if (btn.getAttribute('data-preset') === 'ant') btn.classList.add('active');
-            else btn.classList.remove('active');
-        });
+        applyCameraPreset('ant');
     });
     
     const btnSpawnFood = document.getElementById('btn-spawn-food');
@@ -1542,6 +1649,8 @@ function setupUI() {
         panelColonyEdit.classList.add('hidden');
         panelAntEdit.classList.add('hidden');
     });
+
+
 
     const intelPanel = document.getElementById('intel-panel');
     const btnIntelPin = document.getElementById('btn-intel-pin');
@@ -1705,9 +1814,16 @@ function setupUI() {
                 setCombatMode(combat);
 
                 const persOptions = ['dove', 'hawk', 'grudger', 'bully'];
+                let selectedPers = [];
+                for (let i = 0; i < cols; i++) {
+                    selectedPers.push(persOptions[Math.floor(Math.random() * persOptions.length)]);
+                }
+                if (!selectedPers.includes('hawk') && cols > 0) {
+                    selectedPers[Math.floor(Math.random() * cols)] = 'hawk';
+                }
                 for (let i = 0; i < cols; i++) {
                     colonySetupStrategies[i] = {
-                        personality: persOptions[Math.floor(Math.random() * persOptions.length)],
+                        personality: selectedPers[i],
                         stances: {}
                     };
                 }
@@ -2064,9 +2180,22 @@ function animate(time) {
     
     // FPS counter calculation
     frameCount++;
+    animFrameTotal++;
+    hudUpdateCounter++;
     fpsTimer += dt;
     if (fpsTimer >= 1.0) {
-        document.getElementById('stat-fps').innerText = Math.round(frameCount / fpsTimer);
+        const calculatedFps = Math.round(frameCount / fpsTimer);
+        const fpsLabel = document.getElementById('stat-fps');
+        if (fpsLabel) fpsLabel.innerText = calculatedFps;
+        
+        const pillFps = document.getElementById('pill-fps-value');
+        if (pillFps) pillFps.innerText = calculatedFps + ' FPS';
+        
+        // Refresh cached HUD element refs once per second
+        _hudStatAnts    = document.getElementById('stat-ants');
+        _hudStatForaging = document.getElementById('stat-foraging');
+        _hudPillAnt     = document.getElementById('pill-ant-count');
+        
         frameCount = 0;
         fpsTimer = 0;
     }
@@ -2074,12 +2203,16 @@ function animate(time) {
     // 1. Update Core Simulation Systems
     for (let i = 0; i < activeColonyCount; i++) {
         if (pheromoneGrids[i] && colonies[i]) {
-            pheromoneGrids[i].update();
+            // Throttle: pheromone texture upload every 3 frames, staggered per colony
+            // Uses animFrameTotal (never resets) so throttle stays stable across FPS-counter resets
+            if (animFrameTotal % 3 === i % 3) pheromoneGrids[i].update();
             colonies[i].update(pheromoneGrids[i], WORLD_SIZE, colonies);
             
-            // Check for colony defeat (graveyard conversion when population falls to 0)
             if (colonies[i].ants.length === 0 && !colonies[i].isGraveyard && initialTotalPopulation > 0) {
                 colonies[i].isGraveyard = true;
+                if (window.playEliminationSound) {
+                    window.playEliminationSound();
+                }
                 const nest = nests[i];
                 if (nest) {
                     scene.remove(nest);
@@ -2098,7 +2231,7 @@ function animate(time) {
                         colonies[i].foodPileGroup = null;
                     }
                     
-                    const grave = createGraveyard(colonies[i].nestX, colonies[i].nestZ);
+                    const grave = createGraveyard(colonies[i].nestX, colonies[i].nestZ, colonies[i].exploreColor);
                     scene.add(grave);
                     nests[i] = grave;
                 }
@@ -2111,36 +2244,61 @@ function animate(time) {
         combatParticles.update(dt);
     }
     
-    // 2. Nest Animations (organic breathing pulse of bioluminescent pool and mushrooms)
+    // 2. Nest Animations (organic breathing pulse of bioluminescent pool and mushrooms + deposit pulse)
     nests.forEach((nest) => {
-        const pulse = 3.0 + Math.sin(time * 0.003) * 1.5;
-        if (nest.userData) {
-            if (nest.userData.light) {
-                nest.userData.light.intensity = pulse;
-            }
-            if (nest.userData.pool && nest.userData.pool.material) {
-                nest.userData.pool.material.emissiveIntensity = pulse;
-            }
-            if (nest.userData.mushroomCaps) {
-                nest.userData.mushroomCaps.forEach((cap) => {
-                    if (cap.material) {
-                        // Pulsate cap light with a slight offset phase based on its 3D position
-                        const offset = cap.position.x * 2.0 + cap.position.z * 2.0;
-                        cap.material.emissiveIntensity = 2.5 + Math.sin(time * 0.004 + offset) * 1.5;
-                    }
-                });
-            }
+        if (!nest.userData) return;
+
+        // Decay deposit pulse
+        if (nest.userData.depositPulse === undefined) {
+            nest.userData.depositPulse = 0;
+        }
+        if (nest.userData.depositPulse > 0) {
+            nest.userData.depositPulse = Math.max(0, nest.userData.depositPulse - dt * 1.8);
+        }
+
+        // Keep the main nest size stationary
+        nest.scale.set(1.0, 1.0, 1.0);
+
+        // Pulsate only the top colored sphere (pool)
+        if (nest.userData.pool) {
+            const poolScale = 1.0 + nest.userData.depositPulse * 0.40;
+            nest.userData.pool.scale.set(poolScale, poolScale, poolScale);
+        }
+
+        // Moderate light intensity and pool emissive intensity to keep them highly saturated without turning white
+        const basePulse = 2.2 + Math.sin(time * 0.003) * 0.8; // range 1.4 to 3.0
+        const depositGlow = nest.userData.depositPulse * 1.5;  // adds up to 1.5
+        const finalIntensity = basePulse + depositGlow;       // absolute max is 4.5
+
+        if (nest.userData.light) {
+            nest.userData.light.intensity = finalIntensity;
+        }
+        if (nest.userData.pool && nest.userData.pool.material) {
+            nest.userData.pool.material.emissiveIntensity = finalIntensity;
+        }
+        if (nest.userData.mushroomCaps) {
+            nest.userData.mushroomCaps.forEach((cap) => {
+                if (cap.material) {
+                    // Pulsate cap light with a slight offset phase based on its 3D position, capped below white blowout
+                    const offset = cap.position.x * 2.0 + cap.position.z * 2.0;
+                    cap.material.emissiveIntensity = (1.8 + Math.sin(time * 0.004 + offset) * 0.7) + nest.userData.depositPulse * 1.2;
+                }
+            });
         }
     });
     
     // 3. Camera Controls / Tracking Update
     if (isTransitioningCamera) {
+        controls.autoRotate = false;
         camera.position.lerp(transitionTargetPos, 0.04);
         controls.target.lerp(transitionTargetLook, 0.04);
         controls.update();
-        if (camera.position.distanceTo(transitionTargetPos) < 0.1 && 
-            controls.target.distanceTo(transitionTargetLook) < 0.1) {
+        if (camera.position.distanceTo(transitionTargetPos) < 0.5 && 
+            controls.target.distanceTo(transitionTargetLook) < 0.5) {
             isTransitioningCamera = false;
+            if (cameraPresetMode !== 'ant') {
+                controls.autoRotate = true;
+            }
         }
     } else if (cameraPresetMode === 'ant' && colonies[0] && colonies[0].ants.length > 0) {
         const trackingColony = colonies[0];
@@ -2322,7 +2480,10 @@ function animate(time) {
         if (highlightRing) highlightRing.visible = false;
         controls.update();
     }
-    // 4. Update HUD Statistics scoreboard dynamically
+    // 4. Update HUD Statistics scoreboard dynamically (throttled to ~10Hz via hudUpdateCounter)
+    // All DOM writes (scoreboard bars, food bars, stat pills) run at ~10Hz to minimize main-thread cost.
+    if (hudUpdateCounter >= 6) {
+    hudUpdateCounter = 0; // Reset at entry
     let totalCollected = 0;
     const colonyFood = [];
     const colonyScoreValue = [];
@@ -2557,16 +2718,21 @@ function animate(time) {
         barRemaining.style.width = foodPctRemaining + '%';
         labelRemaining.innerText = foodPctRemaining > 6 ? totalAvailableFood : "";
     }
+    // Ant count and foraging count (GC-free manual loops)
+    let totalAnts = 0;
+    for (let i = 0; i < colonies.length; i++) totalAnts += colonies[i].ants.length;
+    if (_hudStatAnts) _hudStatAnts.innerText = totalAnts;
+    if (_hudPillAnt)  _hudPillAnt.innerText  = totalAnts;
     
-    const totalAnts = colonies.reduce((sum, c) => sum + c.ants.length, 0);
-    document.getElementById('stat-ants').innerText = totalAnts;
-    const pillAnt = document.getElementById('pill-ant-count');
-    if (pillAnt) {
-        pillAnt.innerText = totalAnts;
+    let totalForaging = 0;
+    for (let i = 0; i < colonies.length; i++) {
+        const ants = colonies[i].ants;
+        for (let j = 0; j < ants.length; j++) {
+            if (ants[j].state === 'explore') totalForaging++;
+        }
     }
-    
-    const totalForaging = colonies.reduce((sum, c) => sum + c.ants.filter(a => a.state === 'explore').length, 0);
-    document.getElementById('stat-foraging').innerText = totalForaging;
+        if (_hudStatForaging) _hudStatForaging.innerText = totalForaging;
+    } // end hudUpdateCounter >= 6 — all HUD DOM writes complete
     
     // Update Stats Engine & Live Ticker
     if (window.statsEngine) {
@@ -2617,74 +2783,104 @@ function animate(time) {
     }
     
     // 6. Smoothly paint terrain red locally around active combat
-    const activeFights = [];
-    for (let c = 0; c < colonies.length; c++) {
-        const col = colonies[c];
-        for (let a = 0; a < col.ants.length; a++) {
-            const ant = col.ants[a];
-            if (ant.combatTarget && ant.hp > 0 && ant.combatTarget.hp > 0) {
-                activeFights.push({ x: ant.x, z: ant.z });
+    // Throttle: only run every 5 frames — iterating 14k vertices per frame is the biggest CPU cost
+    // 6. Smoothly paint terrain red locally around active combat
+    // Throttle to run every 4 frames. Performance is highly optimized (runs only on local grid coordinates near active fights).
+    if (frameCount % 4 === 0 && terrainMesh && terrainMesh.geometry) {
+        const activeFights = [];
+        for (let c = 0; c < colonies.length; c++) {
+            const col = colonies[c];
+            for (let a = 0; a < col.ants.length; a++) {
+                const ant = col.ants[a];
+                if (ant.combatTarget && ant.hp > 0 && ant.combatTarget.hp > 0) {
+                    activeFights.push({ x: ant.x, z: ant.z });
+                }
             }
         }
-    }
-    
-    if (terrainMesh && terrainMesh.geometry) {
+
         const colorAttr = terrainMesh.geometry.attributes.color;
         const colors = colorAttr.array;
         const defaults = terrainMesh.geometry.userData.defaultColors;
-        
+
         if (defaults) {
             const posAttr = terrainMesh.geometry.attributes.position;
-            const vertexCount = posAttr.count;
+            const positions = posAttr.array;
+            const segments = 120; // Plane segments
+            const halfSize = WORLD_SIZE / 2;
             let needsUpdate = false;
-            
-            for (let i = 0; i < vertexCount; i++) {
-                const vx = posAttr.getX(i);
-                const vz = posAttr.getZ(i);
-                
-                let minDistSq = Infinity;
-                for (let f = 0; f < activeFights.length; f++) {
-                    const dx = vx - activeFights[f].x;
-                    const dz = vz - activeFights[f].z;
-                    const distSq = dx * dx + dz * dz;
-                    if (distSq < minDistSq) {
-                        minDistSq = distSq;
+
+            // 1. Map active fights to local grid vertex indices
+            const gridRadius = 4; // 2.5 units influence range
+            const fightsVertices = new Set();
+
+            activeFights.forEach(fight => {
+                // Map world coordinates to grid indices
+                const nx = (fight.x + halfSize) / WORLD_SIZE;
+                const nz = (fight.z + halfSize) / WORLD_SIZE;
+                const fgx = Math.round(nx * segments);
+                const fgz = Math.round(nz * segments);
+
+                // Define local bounding box limits in grid space
+                const minGx = Math.max(0, fgx - gridRadius);
+                const maxGx = Math.min(segments, fgx + gridRadius);
+                const minGz = Math.max(0, fgz - gridRadius);
+                const maxGz = Math.min(segments, fgz + gridRadius);
+
+                for (let gz = minGz; gz <= maxGz; gz++) {
+                    for (let gx = minGx; gx <= maxGx; gx++) {
+                        const idx = gz * (segments + 1) + gx;
+                        fightsVertices.add(idx);
+                        modifiedVertices.add(idx); // Track for smooth decay
                     }
                 }
-                
+            });
+
+            // 2. Perform math ONLY on modified vertices (typically 0 to 600 vertices instead of 14,641)
+            modifiedVertices.forEach(i => {
                 const idx = i * 3;
+                const vx = positions[idx];
+                const vz = positions[idx + 2];
+
+                let minDistSq = Infinity;
+                if (fightsVertices.has(i)) {
+                    for (let f = 0; f < activeFights.length; f++) {
+                        const dx = vx - activeFights[f].x;
+                        const dz = vz - activeFights[f].z;
+                        const distSq = dx * dx + dz * dz;
+                        if (distSq < minDistSq) minDistSq = distSq;
+                    }
+                }
+
                 const rDefault = defaults[idx];
-                const gDefault = defaults[idx+1];
-                const bDefault = defaults[idx+2];
-                
-                let targetR = rDefault;
-                let targetG = gDefault;
-                let targetB = bDefault;
-                
-                // Paint local region within 2.0 units of combat (focused) and with 75% blend intensity
-                if (minDistSq < 4.0) { 
+                const gDefault = defaults[idx + 1];
+                const bDefault = defaults[idx + 2];
+
+                let targetR = rDefault, targetG = gDefault, targetB = bDefault;
+
+                if (minDistSq < 6.25) {
                     const dist = Math.sqrt(minDistSq);
-                    const intensity = Math.max(0, 1.0 - dist / 2.0) * 0.75;
+                    const intensity = Math.max(0, 1.0 - dist / 2.5) * 0.95;
                     targetR = rDefault * (1 - intensity) + 1.0 * intensity;
-                    targetG = gDefault * (1 - intensity) + 0.15 * intensity;
-                    targetB = bDefault * (1 - intensity) + 0.15 * intensity;
+                    targetG = gDefault * (1 - intensity) + 0.05 * intensity;
+                    targetB = bDefault * (1 - intensity) + 0.05 * intensity;
                 }
-                
+
                 const diffR = targetR - colors[idx];
-                const diffG = targetG - colors[idx+1];
-                const diffB = targetB - colors[idx+2];
-                
+                const diffG = targetG - colors[idx + 1];
+                const diffB = targetB - colors[idx + 2];
+
                 if (Math.abs(diffR) > 0.001 || Math.abs(diffG) > 0.001 || Math.abs(diffB) > 0.001) {
-                    colors[idx] += diffR * 0.12;
-                    colors[idx+1] += diffG * 0.12;
-                    colors[idx+2] += diffB * 0.12;
+                    colors[idx]     += diffR * 0.15;
+                    colors[idx + 1] += diffG * 0.15;
+                    colors[idx + 2] += diffB * 0.15;
                     needsUpdate = true;
+                } else if (minDistSq === Infinity) {
+                    // Fully returned to default color, can safely stop tracking
+                    modifiedVertices.delete(i);
                 }
-            }
-            
-            if (needsUpdate) {
-                colorAttr.needsUpdate = true;
-            }
+            });
+
+            if (needsUpdate) colorAttr.needsUpdate = true;
         }
     }
     
@@ -2799,8 +2995,15 @@ function renderIntelDashboard() {
         let html = '';
 
         // ── Section: Colony Population at a Glance ──
-        html += `<div class="intel-widget">
-          <div class="intel-section-title">⚡ Colony Status</div>`;
+        html += `<div class="intel-widget" style="padding: 6px 8px; margin-bottom: 6px;">
+          <div class="intel-section-title" style="margin-bottom: 4px; padding-bottom: 2px;">⚡ Colony Status</div>
+          <div class="overview-colony-header">
+            <div>Colony</div>
+            <div style="text-align: right;">Ants / Trend</div>
+            <div style="text-align: right;">Health</div>
+            <div style="text-align: right;">Combat</div>
+            <div style="text-align: right;">Threat</div>
+          </div>`;
 
         colonies.forEach(c => {
             const hex = '#' + c.exploreColor.getHexString();
@@ -2818,44 +3021,37 @@ function renderIntelDashboard() {
             const threat = c.nearestThreatDist||9999;
             const threatPct = threat<9999 ? Math.round(Math.max(0,(1-threat/60))*100) : 0;
             let riskClass='risk-low', riskText='Stable';
-            if (risk>=70){riskClass='risk-high';riskText='Critical!';}
-            else if (risk>=40){riskClass='risk-medium';riskText='Vulnerable';}
+            if (risk>=70){riskClass='risk-high';riskText='Critical';}
+            else if (risk>=40){riskClass='risk-medium';riskText='Vuln';}
 
-            html += `<div class="vitals-colony-block">
-              <div class="vitals-header">
-                <div style="display:flex; align-items:center; gap:6px;">
-                  ${colPill(c.colonyId, hex)}
-                  <span style="font-size:0.52rem; font-weight:800; background:rgba(0,0,0,0.05); color:var(--text-secondary); padding:1px 4px; border-radius:4px; display:inline-flex; align-items:center; gap:3px; text-transform:uppercase;">
-                    <img class="tint-headshot-lazy" data-personality="${c.personality || 'dove'}" data-color="${hex}" style="width: 10px; height: 10px; object-fit: contain;" />
-                    ${c.personality === 'grudger' ? 'Tit-for-Tat' : (c.personality || 'dove')}
-                  </span>
-                </div>
-                <div style="display:flex;align-items:center;gap:5px;">
-                  <span style="font-size:0.62rem;font-weight:700;color:${trendColor};">${trendIcon} ${slope>0?'+':''}${slope.toFixed(1)}/s</span>
-                  <span class="risk-badge ${riskClass}">${riskText}</span>
-                </div>
+            const p = hp.map(b=>(b/hpTot*100).toFixed(1));
+
+            html += `<div class="overview-colony-row">
+              <div class="overview-colony-info">
+                ${colPill(c.colonyId, hex)}
+                <img class="tint-headshot-lazy" data-personality="${c.personality || 'dove'}" data-color="${hex}" style="width: 10px; height: 10px; object-fit: contain;" />
               </div>
-              <div class="vitals-stats-row">
-                <div class="vitals-stat-cell">
-                  <div class="vitals-stat-num" style="color:${hex};">${c.ants.length}</div>
-                  <div class="vitals-stat-label">Ants</div>
-                </div>
-                <div class="vitals-stat-cell">
-                  <div class="vitals-stat-num">${healthScore}%</div>
-                  <div class="vitals-stat-label">Health</div>
-                </div>
-                <div class="vitals-stat-cell">
-                  <div class="vitals-stat-num">${aggPct}%</div>
-                  <div class="vitals-stat-label">Combat</div>
-                </div>
-                <div class="vitals-stat-cell">
-                  <div class="vitals-stat-num" style="color:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};">${threatPct}%</div>
-                  <div class="vitals-stat-label">Threat</div>
-                </div>
+              <div class="overview-colony-stat" style="text-align: right;">
+                <span class="val" style="color:${hex};">${c.ants.length}</span>
+                <span class="sub" style="color:${trendColor};">${trendIcon} ${slope>0?'+':''}${slope.toFixed(1)}/s</span>
               </div>
-              <div>
-                <div style="font-size:0.56rem;color:var(--text-secondary);font-weight:700;text-transform:uppercase;margin-bottom:3px;">HP Profile</div>
-                ${hpBarHtml(hp)}
+              <div class="overview-colony-stat" style="text-align: right;">
+                <span class="val">${healthScore}%</span>
+                <span class="sub ${riskClass}">${riskText}</span>
+              </div>
+              <div class="overview-colony-stat" style="text-align: right;">
+                <span class="val">${aggPct}%</span>
+              </div>
+              <div class="overview-colony-stat" style="text-align: right;">
+                <span class="val" style="color:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};">${threatPct}%</span>
+              </div>
+              <div style="grid-column: span 5; margin-top: 2px;">
+                <div class="overview-hp-bar">
+                  <div style="width:${p[0]}%;background:#ef4444;" title="Crit: ${Math.round(p[0])}%"></div>
+                  <div style="width:${p[1]}%;background:#f97316;" title="Low: ${Math.round(p[1])}%"></div>
+                  <div style="width:${p[2]}%;background:#eab308;" title="Mid: ${Math.round(p[2])}%"></div>
+                  <div style="width:${p[3]}%;background:#22c55e;" title="Full: ${Math.round(p[3])}%"></div>
+                </div>
               </div>
             </div>`;
         });
@@ -2863,48 +3059,49 @@ function renderIntelDashboard() {
         html += `</div>`;
 
         // ── Section: Battle Intensity ──
-        html += `<div class="intel-widget">
-          <div class="intel-section-title">⚔️ Battle Intensity</div>
+        html += `<div class="intel-widget" style="padding: 6px 8px; margin-bottom: 6px;">
+          <div class="intel-section-title" style="margin-bottom: 4px; padding-bottom: 2px;">⚔️ Battle Intensity</div>
           <div class="battle-intensity-gauge">
-            <div class="intensity-label-row">
-              <span>${iLabel}</span>
-              <span class="intensity-label-val" style="color:${iColor};">${Math.round(intensity)}%</span>
+            <div class="intensity-label-row" style="font-size: 0.58rem; line-height: 1;">
+              <span>${iLabel} <span style="color:var(--text-secondary); margin-left: 5px;">(Kills/10s: ${window.statsEngine.recentKillTimes.length})</span></span>
+              <span class="intensity-label-val" style="color:${iColor}; font-size: 0.72rem;">${Math.round(intensity)}%</span>
             </div>
-            <div class="intensity-bar-track">
+            <div class="intensity-bar-track" style="height: 6px; margin-top: 2px; margin-bottom: 0;">
               <div class="intensity-bar-fill" style="width:${intensity}%;background:linear-gradient(90deg,#22c55e ${100-intensity}%,${iColor} 100%);"></div>
             </div>
-            <div style="font-size:0.58rem;color:var(--text-secondary);">Kills in last 10s: <strong style="color:#18181b;">${window.statsEngine.recentKillTimes.length}</strong></div>
           </div>
         </div>`;
 
         // ── Section: Food Dominance ──
-        html += `<div class="intel-widget">
-          <div class="intel-section-title">🌿 Food Dominance</div>
-          <div style="display:flex;height:14px;border-radius:6px;overflow:hidden;gap:1px;">
+        html += `<div class="intel-widget" style="padding: 6px 8px; margin-bottom: 6px;">
+          <div class="intel-section-title" style="margin-bottom: 4px; padding-bottom: 2px;">🌿 Food Dominance</div>
+          <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;gap:1px;">
             ${colonies.map(c=>{
               const hex='#'+c.exploreColor.getHexString();
               const pct = totalFood>0 ? (c.foodCollected/totalFood)*100 : (100/colonies.length);
               return `<div style="width:${pct}%;background:${hex};transition:width 0.5s ease;" title="${getColName(c.colonyId)}: ${c.foodCollected}"></div>`;
             }).join('')}
           </div>
-          <div style="display:flex;justify-content:space-around;margin-top:7px;flex-wrap:wrap;gap:4px;">
+          <div style="display:flex;justify-content:space-around;margin-top:5px;flex-wrap:wrap;gap:4px;">
             ${colonies.map(c=>{
               const hex='#'+c.exploreColor.getHexString();
               const pct = totalFood>0 ? (c.foodCollected/totalFood*100).toFixed(0) : Math.round(100/colonies.length);
-              return `<div style="text-align:center;">
-                ${colPillLight(c.colonyId, hex)}
-                <div style="font-size:0.78rem;font-weight:900;color:${hex};margin-top:3px;">${pct}%</div>
-                <div style="font-size:0.55rem;color:var(--text-secondary);">${c.foodCollected} units</div>
+              return `<div style="text-align:center; font-size: 0.58rem;">
+                <span style="display:inline-flex; align-items:center; gap:3px; font-weight:800; color:${hex};">
+                  <span style="width:5px; height:5px; background:${hex}; border-radius:50%; display:inline-block;"></span>
+                  ${getColName(c.colonyId)}
+                </span>
+                <div style="font-weight:900;color:${hex}; line-height:1.1;">${pct}% <span style="font-weight:500;color:var(--text-secondary);font-size:0.52rem;">(${c.foodCollected} total, ${c.foodStolen || 0} stolen)</span></div>
               </div>`;
             }).join('')}
           </div>
         </div>`;
 
         // ── Section: Mini Map ──
-        html += `<div class="intel-widget">
-          <div class="intel-section-title">🗺 Territory Map</div>
+        html += `<div class="intel-widget" style="padding: 6px 8px; margin-bottom: 0;">
+          <div class="intel-section-title" style="margin-bottom: 4px; padding-bottom: 2px;">🗺 Territory Map</div>
           <div class="mini-map-wrap">
-            <canvas id="mini-map-canvas" width="258" height="120"></canvas>
+            <canvas id="mini-map-canvas" width="258" height="100"></canvas>
           </div>
         </div>`;
 
@@ -2932,71 +3129,91 @@ function renderIntelDashboard() {
             const riskColor = risk>=70?'#ef4444':risk>=40?'#f97316':'#22c55e';
             const aggPct = Math.round((c.aggressionIndex||0)*100);
             const hp = c.hpBuckets||[0,0,0,10];
+            const hpTot = hp.reduce((a,b)=>a+b,0)||1;
+            const p = hp.map(b=>(b/hpTot*100).toFixed(1));
             const killsRow = window.statsEngine.killMatrix[c.colonyId]||{};
             const kills = Object.values(killsRow).reduce((a,b)=>a+b,0);
             const deaths = window.statsEngine.deathCounts[c.colonyId]||0;
             const threat = c.nearestThreatDist||9999;
             const threatPct = threat<9999?Math.round(Math.max(0,(1-threat/60))*100):0;
 
-            html += `<div class="intel-widget colony-detail-block" style="border-left:3px solid ${hex};padding-left:9px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;">
-                <div style="display:flex; align-items:center; gap:6px;">
-                  ${colPill(c.colonyId, hex)}
-                  <span style="font-size:0.52rem; font-weight:800; background:rgba(0,0,0,0.05); color:var(--text-secondary); padding:1px 4px; border-radius:4px; display:inline-flex; align-items:center; gap:3px; text-transform:uppercase;">
+            html += `<div class="intel-widget colony-detail-block" style="border-left:4px solid ${hex}; padding: 10px 12px; margin-bottom: 8px;">
+              <!-- Header Row -->
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  ${colPillCompact(c.colonyId, hex)}
+                  <span style="font-size: 0.6rem; font-weight: 800; background: rgba(0,0,0,0.04); color: var(--text-secondary); padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; text-transform: uppercase;">
                     <img class="tint-headshot-lazy" data-personality="${c.personality || 'dove'}" data-color="${hex}" style="width: 12px; height: 12px; object-fit: contain;" />
                     ${c.personality === 'grudger' ? 'Tit-for-Tat' : (c.personality || 'dove')}
                   </span>
                 </div>
-                <span style="font-size:0.65rem;font-weight:700;display:flex;align-items:center;gap:5px;">
-                  <span style="color:${trendColor};">${trendIcon} ${slope>0?'+':''}${slope.toFixed(1)}/s</span>
-                  <span style="color:${riskColor};background:rgba(0,0,0,0.04);padding:2px 6px;border-radius:6px;">Risk ${Math.round(risk)}%</span>
+                <span style="font-size: 0.62rem; font-weight: 700; display: flex; gap: 6px; align-items: center;">
+                  <span style="color: ${riskColor}; background: rgba(0,0,0,0.04); padding: 2px 6px; border-radius: 4px;">Risk: ${Math.round(risk)}%</span>
                 </span>
-              </div>`;
+              </div>
 
-            // Sparkline + Stats Side-by-Side (Graph Left, 2x2 stats grid Right)
-            html += `<div style="display:flex; gap:8px; align-items:stretch; margin-bottom:7px;">
-              <!-- Left: Graph -->
-              <div style="flex:1.3; min-width:0; display:flex; flex-direction:column; justify-content:center;">
-                ${sparklineHtml(hist?hist.population:[], hex, c.colonyId)}
-              </div>
-              <!-- Right: 2x2 stats grid -->
-              <div style="flex:1; display:grid; grid-template-columns:repeat(2,1fr); gap:4px; min-width:0;">
-                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                  <div class="vitals-stat-num" style="color:${hex}; font-size:0.75rem; line-height:1.1;">${c.ants.length}</div>
-                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">Ants</div>
+              <!-- Vitals Grid (3x2 layout for balanced information) -->
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px;">
+                <!-- Stat 1: Population -->
+                <div class="vitals-stat-cell" style="padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.015); border-radius: 5px; border: 1px solid rgba(0,0,0,0.03); text-align: center;">
+                  <div style="font-size: 0.82rem; font-weight: 800; color: ${hex}; line-height: 1;">${c.ants.length}</div>
+                  <div style="font-size: 0.46rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; margin-top: 1px; letter-spacing: 0.2px;">Ants</div>
+                  <div style="font-size: 0.52rem; font-weight: 700; color: ${trendColor}; margin-top: 2px; line-height: 1;">${trendIcon} ${slope > 0 ? '+' : ''}${slope.toFixed(1)}/s</div>
                 </div>
-                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                  <div class="vitals-stat-num" style="font-size:0.75rem; line-height:1.1;">${Math.round(c.meanHp||0)}</div>
-                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">Avg HP</div>
-                </div>
-                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                  <div class="vitals-stat-num" style="color:${kills>deaths?'#22c55e':'#ef4444'}; font-size:0.75rem; line-height:1.1;">${kd}</div>
-                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">K/D</div>
-                </div>
-                <div class="vitals-stat-cell" style="padding:2px 4px; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-                  <div class="vitals-stat-num" style="font-size:0.75rem; line-height:1.1;">${aggPct}%</div>
-                  <div class="vitals-stat-label" style="font-size:0.45rem; margin-top:1px;">Combat</div>
-                </div>
-              </div>
-            </div>`;
 
-            // Threat row
-            html += `<div style="margin-bottom:7px;">
-              <div style="display:flex;justify-content:space-between;font-size:0.58rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;margin-bottom:3px;">
-                <span>☢ Nearest Enemy</span>
-                <span style="color:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};">${threat<9999?Math.round(threat)+'m away':'None detected'}</span>
-              </div>
-              <div class="threat-bar-row">
-                <div class="threat-bar-track">
-                  <div class="threat-bar-fill" style="width:${threatPct}%;background:${threatPct>60?'#ef4444':threatPct>30?'#f97316':'#22c55e'};"></div>
+                <!-- Stat 2: Resources -->
+                <div class="vitals-stat-cell" style="padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.015); border-radius: 5px; border: 1px solid rgba(0,0,0,0.03); text-align: center;">
+                  <div style="font-size: 0.82rem; font-weight: 800; color: #10b981; line-height: 1;">${c.foodCollected || 0}</div>
+                  <div style="font-size: 0.46rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; margin-top: 1px; letter-spacing: 0.2px;">Foraged</div>
+                  <div style="font-size: 0.52rem; font-weight: 700; color: #f59e0b; margin-top: 2px; line-height: 1;">Stolen: ${c.foodStolen || 0}</div>
+                </div>
+
+                <!-- Stat 3: Combat KD -->
+                <div class="vitals-stat-cell" style="padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.015); border-radius: 5px; border: 1px solid rgba(0,0,0,0.03); text-align: center;">
+                  <div style="font-size: 0.82rem; font-weight: 800; color: ${kills >= deaths ? '#10b981' : '#ef4444'}; line-height: 1;">${kd}</div>
+                  <div style="font-size: 0.46rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; margin-top: 1px; letter-spacing: 0.2px;">K/D Ratio</div>
+                  <div style="font-size: 0.52rem; font-weight: 700; color: var(--text-secondary); margin-top: 2px; line-height: 1;">${kills}K / ${deaths}D</div>
+                </div>
+
+                <!-- Stat 4: Avg Health -->
+                <div class="vitals-stat-cell" style="padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.015); border-radius: 5px; border: 1px solid rgba(0,0,0,0.03); text-align: center;">
+                  <div style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary); line-height: 1;">${Math.round(c.meanHp || 0)}</div>
+                  <div style="font-size: 0.46rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; margin-top: 1px; letter-spacing: 0.2px;">Avg HP</div>
+                  <div style="font-size: 0.52rem; font-weight: 700; color: var(--text-secondary); margin-top: 2px; line-height: 1;">Max: 100 HP</div>
+                </div>
+
+                <!-- Stat 5: Combat Involvement -->
+                <div class="vitals-stat-cell" style="padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.015); border-radius: 5px; border: 1px solid rgba(0,0,0,0.03); text-align: center;">
+                  <div style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary); line-height: 1;">${aggPct}%</div>
+                  <div style="font-size: 0.46rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; margin-top: 1px; letter-spacing: 0.2px;">In Combat</div>
+                  <div style="font-size: 0.52rem; font-weight: 700; color: var(--text-secondary); margin-top: 2px; line-height: 1;">Aggression</div>
+                </div>
+
+                <!-- Stat 6: Threat Info -->
+                <div class="vitals-stat-cell" style="padding: 5px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.015); border-radius: 5px; border: 1px solid rgba(0,0,0,0.03); text-align: center;">
+                  <div style="font-size: 0.82rem; font-weight: 800; color: ${threatPct > 60 ? '#ef4444' : threatPct > 30 ? '#f97316' : '#10b981'}; line-height: 1;">
+                    ${threat < 9999 ? Math.round(threat) + 'm' : 'Safe'}
+                  </div>
+                  <div style="font-size: 0.46rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; margin-top: 1px; letter-spacing: 0.2px;">Threat Dist</div>
+                  <div style="font-size: 0.52rem; font-weight: 700; color: ${threatPct > 60 ? '#ef4444' : threatPct > 30 ? '#f97316' : '#10b981'}; margin-top: 2px; line-height: 1;">
+                    ${threatPct > 60 ? 'Immediate' : threatPct > 30 ? 'Warning' : 'Low Risk'}
+                  </div>
                 </div>
               </div>
-            </div>`;
 
-            // HP bar
-            html += `<div>
-              <div style="font-size:0.56rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;margin-bottom:4px;">HP Distribution</div>
-              ${hpBarHtml(hp)}
+              <!-- Sleek Combined HP Distribution Bar (Mini scale) -->
+              <div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.48rem; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">
+                  <span>HP Distribution</span>
+                  <span>Crit ${Math.round(p[0])}% · Low ${Math.round(p[1])}% · Mid ${Math.round(p[2])}% · Full ${Math.round(p[3])}%</span>
+                </div>
+                <div style="height: 4px; display: flex; border-radius: 2px; overflow: hidden; background: rgba(0,0,0,0.05);">
+                  <div style="width: ${p[0]}%; background: #ef4444;" title="Crit: ${p[0]}%"></div>
+                  <div style="width: ${p[1]}%; background: #f97316;" title="Low: ${p[1]}%"></div>
+                  <div style="width: ${p[2]}%; background: #eab308;" title="Mid: ${p[2]}%"></div>
+                  <div style="width: ${p[3]}%; background: #22c55e;" title="Full: ${p[3]}%"></div>
+                </div>
+              </div>
             </div>`;
 
             html += `</div>`;
@@ -3222,7 +3439,7 @@ function renderMiniMap() {
     if (!canvas || !colonies || colonies.length === 0) return;
 
     const W = canvas.width = canvas.offsetWidth || 258;
-    const H = canvas.height = 120;
+    const H = canvas.height = 100;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0,0,W,H);
 
@@ -3305,6 +3522,7 @@ function applyCameraPreset(preset) {
         document.getElementById('btn-camera-follow').classList.remove('active');
         controls.enabled = true;
         controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.22;
         adjustCameraToFrameNests(false); // Glide smoothly to frame nests
     } else if (preset === 'battle') {
         followAntMode = false;
@@ -3313,6 +3531,7 @@ function applyCameraPreset(preset) {
         document.getElementById('btn-camera-follow').classList.remove('active');
         controls.enabled = true;
         controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.22;
     } else if (preset === 'ant') {
         followAntMode = true;
         isTransitioningCamera = false;
@@ -3400,7 +3619,7 @@ function updateNestStatsCard() {
     const totalFood = colonies.reduce((s, c) => s + c.foodCollected, 0);
     const foodPct = totalFood > 0 ? Math.round((col.foodCollected / totalFood) * 100) : Math.round(100 / colonies.length);
     if (food) {
-        food.innerText = `${col.foodCollected} (${foodPct}%)`;
+        food.innerText = `${col.foodCollected} (${foodPct}%) [Stolen: ${col.foodStolen || 0}]`;
     }
 
     // K/D Ratio
